@@ -108,8 +108,18 @@ npm test               # loads the extension into Chromium and measures what tab
 ```
 
 The tests mute every tab they open, play 19 kHz tones at -60 dBFS, and measure each tab's real output with tab
-capture (which hears muted tabs), so they're silent. Capture
-mode's "only after you clicked the extension on this tab" rule is bypassed in the tests, so check that by hand.
+capture (which hears muted tabs), so they're silent.
+
+```bash
+npm run test:real      # the same in your installed Google Chrome, the way a person uses it
+```
+
+`test:real` starts Google Chrome with a throwaway profile and drives it over its debugging protocol, which can load
+the extension and click its toolbar icon for real. It installs 1.0.0 and updates it over open tabs, reloads it while
+tabs play, opens the dialog, runs capture mode under Chrome's real "only after you clicked it on this tab" rule,
+plays a DRM (ClearKey) stream, and visits YouTube, Vimeo, Facebook and Twitch, failing on anything that shows up
+under Errors in chrome://extensions. A Chrome window is open while it runs. Set `CHROME` to use another
+Chromium-based browser's binary.
 
 To try a change, load the `extension` folder with **Load unpacked** and click the reload arrow after editing.
 

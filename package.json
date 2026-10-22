@@ -3,7 +3,8 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "test": "node --test tests/"
+    "test": "node --test tests/",
+    "test:real": "node --test --test-concurrency=1 tests/real-chrome.mjs"
   },
   "devDependencies": {
     "playwright": "^1.64.1"

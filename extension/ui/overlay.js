@@ -85,6 +85,7 @@
     panel = p;
     if (closed) return p.destroy();
     wrap.hidden = false;
+    host.dataset.ready = "";   // for tests and for anyone checking from the page: the dialog is showing its values
     dialog.querySelector(".slider").focus();
   });
 })();

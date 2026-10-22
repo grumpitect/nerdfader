@@ -11,11 +11,12 @@
 //
 // Updating the extension leaves the old copy of this script running in open tabs, cut off from the extension. The
 // new copy takes over: the old one undoes its patches and hands over what it was tracking (elements already routed
-// through Web Audio can't be routed a second time). Version 1.0 can't hand over; it keeps its last level, which is
-// 100% unless that tab had been changed, and stops listening because the events were renamed.
+// through Web Audio can't be routed a second time). Version 1.0 can't hand over, so it is set back to 100% (its
+// own event, which nothing else sends any more) and left in place doing nothing.
 (() => {
   const KEY = Symbol.for("nerdfader");
   const previous = window[KEY]?.retire?.();
+  if (window.__nerdfaderPatched) window.dispatchEvent(new CustomEvent("nerdfader:level", { detail: 1 }));
 
   let level = 1;
   const NativeAudioContext = window.AudioContext;   // pages sometimes replace it later

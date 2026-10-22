@@ -530,7 +530,7 @@ test("version 1.0's page script left in an open tab doesn't stop the new one", a
     const a = document.createElement("audio");
     // Run 1.0 the way it ran in its own world, then the new copy.
     new Function(old)();
-    window.dispatchEvent(new CustomEvent("nerdfader:level", { detail: 1 }));   // 1.0's last level: 100%
+    window.dispatchEvent(new CustomEvent("nerdfader:level", { detail: 0.125 }));   // 1.0 had this tab at 50%
     new Function(now)();
     a.volume = 0.8;
     window.dispatchEvent(new CustomEvent("nerdfader2:level", { detail: 0.125 }));
