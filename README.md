@@ -5,13 +5,14 @@
 **A volume slider for every browser tab, from 0 to 600%.**
 
 Nerdfader is a small, free, open-source browser extension for Arc, Chrome and other Chromium browsers. Click its
-icon, drag the slider, and that tab gets quieter (or louder). Most sites are boosted from inside the page, with no
+icon, and a small dialog opens in the middle of the page over a blurred backdrop. Drag the slider, and that tab
+gets quieter (or louder). Click anywhere outside it, press Esc, or click the icon again to close it. Most sites are boosted from inside the page, with no
 "this tab is being shared" highlight; capture mode is only used, with your OK, for the few sites that block that.
 
 Made for the [Nerdative](https://www.youtube.com/@nerdative) channel on YouTube, by the same person as
 [Nerdwave](https://github.com/grumpitect/nerdwave).
 
-<p align="center"><img src="docs/popup.png" width="320" alt="Nerdfader popup"></p>
+<p align="center"><img src="docs/dialog.png" width="660" alt="Nerdfader's dialog over a page"></p>
 
 ## Features
 
@@ -23,11 +24,14 @@ Made for the [Nerdative](https://www.youtube.com/@nerdative) channel on YouTube,
   mode: once for that tab, or always. It runs only while the tab plays sound: it stops a moment after the tab
   pauses or goes quiet, and starts again when it plays.
 - **Reset.** One click (or **r**) puts the tab back to 100%.
+- **Opens over the page.** The dialog sits in the page, centered over a blurred backdrop, and shows above
+  fullscreen video too. Keys you type in it don't reach the page, so a video player won't also seek. On pages
+  extensions can't touch (`arc://` and `chrome://` pages, the Web Store) the icon opens a regular popup instead.
 - **all_tabs.** Turn it on and one slider sets every tab, including ones you open later. Turn it off and every
   tab goes back to the volume it had before.
 - **Badge.** The toolbar icon shows the tab's volume when it isn't 100%.
 - **Keyboard and mouse wheel.** ←/→ change by 5% (25% above 100%; hold Shift for finer steps), **0** to **9**
-  jump to 0 to 90%, **r** resets, and scrolling over the popup works too.
+  jump to 0 to 90%, **r** resets, **Esc** closes, and scrolling over the dialog works too.
 - **The site doesn't notice.** YouTube's own volume slider keeps working and keeps showing its own value;
   Nerdfader scales whatever the site plays.
 - **Even-feeling slider.** Below 100% it uses the same curve as VLC and Nerdwave, so 50% sounds about half as
@@ -56,7 +60,8 @@ read it first if you like.
 3. Pin it to your toolbar so the slider is one click away.
 
 Tabs that were already open start working right away. **Updating:** run the install command again (or replace the
-folder), then click the reload arrow on Nerdfader's card or restart the browser. Your settings stay.
+folder), then click the reload arrow on Nerdfader's card or restart the browser. Your settings stay, and open tabs
+switch to the new version on their own. (Coming from 1.0.0, reload tabs that were open during the update once.)
 
 ## How it works
 
@@ -102,7 +107,8 @@ npx playwright install chromium
 npm test               # loads the extension into Chromium and measures what tabs actually play at
 ```
 
-The tests play 19 kHz tones at -60 dBFS (inaudible) and measure each tab's real output with tab capture. Capture
+The tests mute every tab they open, play 19 kHz tones at -60 dBFS, and measure each tab's real output with tab
+capture (which hears muted tabs), so they're silent. Capture
 mode's "only after you clicked the extension on this tab" rule is bypassed in the tests, so check that by hand.
 
 To try a change, load the `extension` folder with **Load unpacked** and click the reload arrow after editing.
@@ -113,10 +119,12 @@ To try a change, load the `extension` folder with **Load unpacked** and click th
 - `extension/background.js`: remembers each tab's volume and the switches, pushes levels to tabs, and decides when
   capture mode runs.
 - `extension/offscreen/`: capture mode's playback, limiter and silence detection.
-- `extension/popup/`: the slider.
+- `extension/ui/panel.js`: the panel (slider, reset, switches, capture offer), shared by the dialog and the popup.
+- `extension/ui/overlay.js`: the in-page dialog.
+- `extension/popup/`: the toolbar popup, for pages the dialog can't open in.
 - `Tools/make_icon.py`: regenerates the icons (`pip install pillow numpy`, then `python3 Tools/make_icon.py extension/icons`;
   `python3 Tools/make_icon.py --png docs/nerdfader-icon.png 1024` renders the README version).
-- `SCREENSHOT=docs/popup.png npm test` re-renders the popup screenshot.
+- `SCREENSHOT=docs/dialog.png npm test` re-renders the README screenshot.
 
 Maintainers publish a release with `./release.sh` (patch bump by default; `minor`, `major` or an exact `X.Y.Z`
 also work). It runs the tests, bumps the version in `manifest.json`, zips the extension, tags, pushes and creates

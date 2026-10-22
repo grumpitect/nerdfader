@@ -6,11 +6,16 @@
 //   instead of distorting. Elements the browser won't let Web Audio hear (DRM, media from another site without
 //   CORS) are left alone, and the frame reports why so the extension can offer capture mode instead.
 // - Web Audio: connections to an AudioContext's destination go through one hidden gain stage per context.
-// bridge.js (the extension's isolated world) sends the level as a "nerdfader:level" event on window, and passes
-// this frame's "nerdfader:status" (why it can't boost, or "") back to the extension.
+// bridge.js (the extension's isolated world) sends the level as a "nerdfader2:level" event on window, and passes
+// this frame's "nerdfader2:status" (why it can't boost, or "") back to the extension.
+//
+// Updating the extension leaves the old copy of this script running in open tabs, cut off from the extension. The
+// new copy takes over: the old one undoes its patches and hands over what it was tracking (elements already routed
+// through Web Audio can't be routed a second time). Version 1.0 can't hand over; it keeps its last level, which is
+// 100% unless that tab had been changed, and stops listening because the events were renamed.
 (() => {
-  if (window.__nerdfaderPatched) return;
-  Object.defineProperty(window, "__nerdfaderPatched", { value: true });
+  const KEY = Symbol.for("nerdfader");
+  const previous = window[KEY]?.retire?.();
 
   let level = 1;
   const NativeAudioContext = window.AudioContext;   // pages sometimes replace it later
@@ -52,10 +57,10 @@
   // <audio> and <video>
   const media = HTMLMediaElement.prototype;
   const volume = Object.getOwnPropertyDescriptor(media, "volume");
-  const pageVolume = new WeakMap();   // element -> the volume the page asked for
-  const elements = new Set();         // WeakRefs to every element we have touched, attached or not (new Audio())
-  const routed = new WeakSet();       // elements playing through the boost stage
-  const encrypted = new WeakSet();    // elements that announced DRM-protected media
+  const pageVolume = previous?.pageVolume ?? new WeakMap();   // element -> the volume the page asked for
+  const elements = previous?.elements ?? new Set();     // WeakRefs to every element touched, attached or not (new Audio())
+  const routed = previous?.routed ?? new WeakSet();     // elements playing through the boost stage
+  const encrypted = previous?.encrypted ?? new WeakSet();   // elements that announced DRM-protected media
 
   const apply = (el) => {
     const want = Math.min(1, Math.max(0, pageVolume.get(el) * Math.min(level, 1)));
@@ -74,7 +79,7 @@
     }
   };
 
-  Object.defineProperty(media, "volume", {
+  const patchedVolume = {
     configurable: true,
     enumerable: volume.enumerable,
     get() {
@@ -87,14 +92,16 @@
       pageVolume.set(this, n);
       apply(this);
     },
-  });
+  };
+  Object.defineProperty(media, "volume", patchedVolume);
 
   const play = media.play;
-  media.play = function () {
+  const patchedPlay = function () {
     track(this);
     if (level > 1) boost(this);
     return play.apply(this, arguments);
   };
+  media.play = patchedPlay;
 
   // Why Web Audio can't take this element's sound ("" when it can). Routing it anyway would silence it.
   function blocker(el) {
@@ -108,7 +115,14 @@
   }
 
   // The boost stage for elements, created the first time something needs boosting.
-  let boostCtx = null, boostStage = null, needsClick = false;
+  let boostCtx = previous?.boostCtx ?? null, boostStage = previous?.boostStage ?? null, needsClick = false;
+  const wake = () => boostCtx && boostCtx.state !== "running" && boostCtx.resume();
+  const check = () => {
+    needsClick = boostCtx.state !== "running";
+    if (!needsClick && level > 1) each(boost);
+    report();
+  };
+  if (boostCtx) boostCtx.onstatechange = check;
   function boostContext() {
     if (boostCtx) return boostCtx;
     // A fixed rate: the default follows the current output device, which can be a 16 kHz headset for a moment.
@@ -117,22 +131,18 @@
     boostStage.set(Math.max(level, 1), false);
     // Browsers only start audio after the user has interacted with the page (or it may autoplay with sound).
     // Until then, routing would mute the element, so wait for a click or key press in the page.
-    const check = () => {
-      needsClick = boostCtx.state !== "running";
-      if (!needsClick && level > 1) each(boost);
-      report();
-    };
     boostCtx.onstatechange = check;
     setTimeout(check, 300);
-    const wake = () => boostCtx.state !== "running" && boostCtx.resume();
-    addEventListener("pointerdown", wake, true);
-    addEventListener("keydown", wake, true);
     return boostCtx;
   }
   function boost(el) {
     if (routed.has(el) || blocker(el) !== "") return;
     if (boostContext().state !== "running") return;
-    connect.call(boostCtx.createMediaElementSource(el), boostStage.input);
+    try {
+      connect.call(boostCtx.createMediaElementSource(el), boostStage.input);
+    } catch {
+      return;   // routed by an earlier copy that couldn't hand it over; it stays at up to 100%
+    }
     routed.add(el);
   }
 
@@ -147,7 +157,7 @@
     });
     if (status === lastStatus) return;
     lastStatus = status;
-    window.dispatchEvent(new CustomEvent("nerdfader:status", { detail: status }));
+    window.dispatchEvent(new CustomEvent("nerdfader2:status", { detail: status }));
   }
 
   // Elements that autoplay or start from the browser's own controls never call play() from script.
@@ -158,13 +168,14 @@
     if (level > 1 && (e.type === "play" || e.type === "playing")) boost(e.target);
     report();
   };
-  for (const type of ["play", "playing", "pause", "ended", "emptied", "loadstart", "encrypted", "volumechange"]) {
-    document.addEventListener(type, onMedia, true);
-  }
+  const mediaEvents = ["play", "playing", "pause", "ended", "emptied", "loadstart", "encrypted", "volumechange"];
+  for (const type of mediaEvents) document.addEventListener(type, onMedia, true);
+  addEventListener("pointerdown", wake, true);
+  addEventListener("keydown", wake, true);
 
   // Web Audio made by the page
-  const stages = new WeakMap();       // AudioContext -> its output stage
-  const contexts = new Set();         // WeakRefs to those contexts
+  const stages = previous?.stages ?? new WeakMap();   // AudioContext -> its output stage
+  const contexts = previous?.contexts ?? new Set();   // WeakRefs to those contexts
 
   const stageFor = (ctx) => {
     let stage = stages.get(ctx);
@@ -180,17 +191,19 @@
   const isSpeakers = (node) =>
     node instanceof AudioDestinationNode && node.context instanceof NativeAudioContext;
 
-  AudioNode.prototype.connect = function (target, ...rest) {
+  const patchedConnect = function (target, ...rest) {
     if (isSpeakers(target) && target.context !== boostCtx) {
       connect.call(this, stageFor(target.context), ...rest);
       return target;
     }
     return connect.call(this, target, ...rest);
   };
-  AudioNode.prototype.disconnect = function (target, ...rest) {
+  const patchedDisconnect = function (target, ...rest) {
     if (isSpeakers(target) && stages.has(target.context)) return disconnect.call(this, stages.get(target.context).input, ...rest);
     return disconnect.apply(this, arguments);
   };
+  AudioNode.prototype.connect = patchedConnect;
+  AudioNode.prototype.disconnect = patchedDisconnect;
 
   const setLevel = (next) => {
     level = next;
@@ -205,9 +218,26 @@
     report();
   };
 
-  window.addEventListener("nerdfader:level", (e) => {
+  const onLevel = (e) => {
     const n = Number(e.detail);
     if (n >= 0 && n <= 6) setLevel(n);
-  });
-  window.dispatchEvent(new Event("nerdfader:ready"));
+  };
+  window.addEventListener("nerdfader2:level", onLevel);
+
+  // Called by a newer copy of this script: undo everything here and hand over the state.
+  const retire = () => {
+    window.removeEventListener("nerdfader2:level", onLevel);
+    for (const type of mediaEvents) document.removeEventListener(type, onMedia, true);
+    removeEventListener("pointerdown", wake, true);
+    removeEventListener("keydown", wake, true);
+    if (Object.getOwnPropertyDescriptor(media, "volume").set === patchedVolume.set) Object.defineProperty(media, "volume", volume);
+    if (media.play === patchedPlay) media.play = play;
+    if (AudioNode.prototype.connect === patchedConnect) AudioNode.prototype.connect = connect;
+    if (AudioNode.prototype.disconnect === patchedDisconnect) AudioNode.prototype.disconnect = disconnect;
+    each((el) => volume.set.call(el, pageVolume.get(el)));
+    if (boostCtx) boostCtx.onstatechange = null;
+    return { pageVolume, elements, routed, encrypted, boostCtx, boostStage, stages, contexts };
+  };
+  Object.defineProperty(window, KEY, { value: { retire }, configurable: true });
+  window.dispatchEvent(new Event("nerdfader2:ready"));
 })();

@@ -3,8 +3,9 @@
 // at, read from an isolated world where the volume property is not patched; "heard" values are peaks of a tab's
 // actual sound output, captured the same way capture mode does it.
 //
-// Sound is on (capture and the browser's "playing sound" state need it), but every test tone is a 19 kHz tone at
-// -60 dBFS: above what people hear, and very quiet, so the tests are silent.
+// Sound is on (capture and the browser's "playing sound" state need it), but every tab is muted (tab capture still
+// hears it) and every test tone is a 19 kHz tone at -60 dBFS, so the only thing that reaches the speakers, capture
+// mode's own playback, is inaudible too.
 // The extension is allowlisted for tab capture, which skips the browser's "user opened the extension on this tab"
 // rule; that rule itself can only be checked by hand.
 import { test, before, after } from "node:test";
@@ -23,7 +24,7 @@ const TONE = 0.001;   // -60 dBFS
 const near = (a, b, msg) => assert.ok(Math.abs(a - b) < 1e-6, `${msg ?? ""} expected ${b}, got ${a}`);
 const gain = (p) => (p <= 100 ? (p / 100) ** 3 : p / 100);
 
-let server, origin, otherOrigin, context, ext;
+let server, origin, otherOrigin, context, ext, sw;
 
 const pages = {
   "/": `<!doctype html><title>t</title><audio id="a"></audio><video id="v"></video>
@@ -31,6 +32,10 @@ const pages = {
         <script>document.getElementById("a").volume = 0.8;</script>`,
   "/frame": `<!doctype html><audio id="inner"></audio><script>document.getElementById("inner").volume = 0.5;</script>`,
   "/player": `<!doctype html><title>player</title>`,
+  // Something to see behind the dialog's blur in the README screenshot.
+  "/demo": `<!doctype html><title>demo</title><body style="margin:0;font:600 28px system-ui;color:#fff;background:#0d0d14">
+    <div style="height:62vh;background:linear-gradient(135deg,#ff4fa8,#6b3bff 55%,#1fc8ff);display:grid;place-items:center">▶ some video</div>
+    <div style="padding:24px 32px;font-size:20px;color:#bbb">A very good video, with a title long enough to wrap behind the blur.</div></body>`,
 };
 
 // 16-bit mono WAV of a 19 kHz tone at TONE; parts alternate sound and silence, in seconds.
@@ -76,7 +81,12 @@ before(async () => {
       "--disable-features=MediaSessionService",
     ],
   });
-  const sw = context.serviceWorkers()[0] ?? (await context.waitForEvent("serviceworker"));
+  sw = context.serviceWorkers()[0] ?? (await context.waitForEvent("serviceworker"));
+  // Every test tab is muted: its sound still reaches tab capture (which the tests measure with), not the speakers.
+  await sw.evaluate(() => {
+    chrome.tabs.onCreated.addListener((tab) => chrome.tabs.update(tab.id, { muted: true }));
+    chrome.tabs.query({}).then((tabs) => tabs.forEach((t) => chrome.tabs.update(t.id, { muted: true })));
+  });
   const id = new URL(sw.url()).host;
   assert.equal(id, EXT_ID, "extension id (needed for the capture allowlist)");
   ext = await context.newPage();
@@ -252,7 +262,9 @@ test("Web Audio goes through a gain node that follows the tab's volume", async (
     BaseAudioContext.prototype.createGain = function () { const g = make.call(this); created.push(g); return g; };
     window.ctx = new AudioContext();
     const osc = ctx.createOscillator();
-    window.returned = osc.connect(ctx.destination) === ctx.destination;
+    const silent = new GainNode(ctx, { gain: 0 });   // the graph is what's being tested, not the sound
+    osc.connect(silent);
+    window.returned = silent.connect(ctx.destination) === ctx.destination;
     osc.start();
   });
   assert.equal(await page.evaluate(() => window.returned), true, "connect() returns the destination for chaining");
@@ -295,7 +307,7 @@ test("tabs opened before the extension loaded get it when it is installed", asyn
   await page.close();
 });
 
-test("popup shows and changes the current tab", async () => {
+test("the toolbar popup (for pages the dialog can't open in) shows and changes the current tab", async () => {
   const { page, tabId } = await openTestPage();
   const url = page.url();
   const popup = await context.newPage();
@@ -305,46 +317,30 @@ test("popup shows and changes the current tab", async () => {
   }, [tabId, url]);
   await popup.setViewportSize({ width: 320, height: 300 });
   await popup.goto(ext.url());
-  await popup.locator("#percent", { hasText: "100%" }).waitFor();
-  assert.equal(await popup.locator("#target").textContent(), "127.0.0.1");
+  await popup.locator(".percent", { hasText: "100%" }).waitFor();
+  assert.equal(await popup.locator(".target").textContent(), "127.0.0.1");
 
   await popup.keyboard.press("4");
-  await popup.locator("#percent", { hasText: "40%" }).waitFor();
+  await popup.locator(".percent", { hasText: "40%" }).waitFor();
   await settle();
   near((await real(tabId)).a, 0.8 * gain(40));
   await popup.keyboard.press("ArrowRight");
-  await popup.locator("#percent", { hasText: "45%" }).waitFor();
-  await popup.click("#reset");
-  await popup.locator("#percent", { hasText: "100%" }).waitFor();
-  assert.equal(await popup.locator("#reset").isDisabled(), true);
+  await popup.locator(".percent", { hasText: "45%" }).waitFor();
+  await popup.click(".reset");
+  await popup.locator(".percent", { hasText: "100%" }).waitFor();
+  assert.equal(await popup.locator(".reset").isDisabled(), true);
 
-  await popup.click("#toggleRow");
-  await popup.locator("#target", { hasText: "all tabs" }).waitFor();
+  await popup.click("label.toggle >> nth=0");
+  await popup.locator(".target", { hasText: "all tabs" }).waitFor();
   await popup.keyboard.press("3");
   await settle();
   near((await real(tabId)).a, 0.8 * gain(30));
-  await popup.click("#toggleRow");
-  await popup.locator("#target", { hasText: "127.0.0.1" }).waitFor();
+  await popup.click("label.toggle >> nth=0");
+  await popup.locator(".target", { hasText: "127.0.0.1" }).waitFor();
   await send({ type: "setOverride", on: false, percent: 100 });
   await send({ type: "setTab", tabId, percent: 100 });
   await popup.close();
 
-  // SCREENSHOT=docs/popup.png npm test: renders the popup for the README, as if it were open on a video site.
-  if (process.env.SCREENSHOT) {
-    const shot = await context.newPage();
-    await shot.addInitScript((tabId) => {
-      chrome.tabs.query = async () => [{ id: tabId, url: "https://www.youtube.com/watch" }];
-    }, tabId);
-    await shot.goto(ext.url());
-    await shot.locator("#percent", { hasText: "100%" }).waitFor();
-    await shot.keyboard.press("4");
-    await shot.locator("#percent", { hasText: "40%" }).waitFor();
-    await shot.evaluate(() => document.activeElement.blur());
-    await shot.waitForTimeout(300);
-    await shot.locator("body").screenshot({ path: process.env.SCREENSHOT, scale: "device" });
-    await send({ type: "setTab", tabId, percent: 100 });
-    await shot.close();
-  }
   await page.close();
 });
 
@@ -439,4 +435,108 @@ test("closing a captured tab ends its capture", async () => {
   assert.equal((await send({ type: "setCapture", tabId, once: true })).capture, "on");
   await page.close();
   assert.equal(await until(async () => Object.keys(await offscreenStats()).length === 0), true);
+});
+
+// The dialog lives in a closed shadow root, so these tests drive it the way a person does: keys and clicks.
+const dialogOpen = (page) => page.evaluate(() => !!document.querySelector("nerdfader-dialog"));
+const openDialog = async (page, tabId) => {
+  await sw.evaluate(async (tabId) => openPanel(await chrome.tabs.get(tabId)), tabId);
+  await until(() => dialogOpen(page), 2000);
+  await wait(300);   // the panel loads its state
+};
+
+test("the toolbar icon opens a dialog in the page that changes the tab, and closes on Esc, outside clicks or a second click", async () => {
+  const { page, tabId } = await openTestPage();
+  await page.evaluate(() => { window.pageKeys = 0; document.addEventListener("keydown", () => window.pageKeys++); });
+  await openDialog(page, tabId);
+  assert.equal(await dialogOpen(page), true);
+
+  await page.keyboard.press("4");
+  await settle();
+  near((await real(tabId)).a, 0.8 * gain(40), "keys in the dialog change the tab");
+  assert.equal(await page.evaluate(() => window.pageKeys), 0, "the page doesn't see keys typed in the dialog");
+
+  await page.keyboard.press("Escape");
+  assert.equal(await until(async () => !(await dialogOpen(page)), 1000), true, "Esc closes");
+
+  await openDialog(page, tabId);
+  await page.mouse.click(5, 5);
+  assert.equal(await until(async () => !(await dialogOpen(page)), 1000), true, "a click outside closes");
+
+  await openDialog(page, tabId);
+  await sw.evaluate(async (tabId) => openPanel(await chrome.tabs.get(tabId)), tabId);
+  assert.equal(await until(async () => !(await dialogOpen(page)), 1000), true, "clicking the icon again closes");
+
+  await send({ type: "setTab", tabId, percent: 100 });
+  await page.close();
+
+  // SCREENSHOT=docs/dialog.png npm test: renders the dialog for the README.
+  if (process.env.SCREENSHOT) {
+    const demo = await context.newPage();
+    await demo.setViewportSize({ width: 880, height: 560 });
+    await demo.goto(origin + "/demo");
+    const demoId = await tabIdOf(origin);
+    await send({ type: "setTab", tabId: demoId, percent: 250 });
+    await openDialog(demo, demoId);
+    await demo.evaluate(() => document.activeElement?.blur());
+    await wait(300);
+    await demo.screenshot({ path: process.env.SCREENSHOT });
+    await send({ type: "setTab", tabId: demoId, percent: 100 });
+    await demo.close();
+  }
+});
+
+test("pages the dialog can't open in get the toolbar popup instead", async () => {
+  const page = await context.newPage();
+  await page.goto("chrome://version");
+  const tabId = await ext.evaluate(async () => Math.max(...(await chrome.tabs.query({})).map((t) => t.id)));
+  await sw.evaluate(async (tabId) => openPanel(await chrome.tabs.get(tabId)), tabId);
+  assert.equal(await sw.evaluate((tabId) => chrome.action.getPopup({ tabId }), tabId), `chrome-extension://${EXT_ID}/popup/popup.html`);
+  await page.close();
+});
+
+test("a newer copy of the page script takes over from an older one, boosts included", async () => {
+  const { page, tabId } = await openPlayer();
+  const base = await heard(tabId);
+  await send({ type: "setTab", tabId, percent: 300 });
+  await settle();
+  ratio(await heard(tabId), base, 3, "boosted by the first copy");
+  // What an extension update does to open tabs: inject the new scripts next to the old ones.
+  await ext.evaluate(async (tabId) => {
+    const target = { tabId, allFrames: true };
+    await chrome.scripting.executeScript({ target, files: ["content/main.js"], world: "MAIN" });
+    await chrome.scripting.executeScript({ target, files: ["content/bridge.js"] });
+  }, tabId);
+  await send({ type: "setTab", tabId, percent: 200 });
+  await settle();
+  ratio(await heard(tabId), base, 2, "the new copy controls the element the old one routed");
+  await send({ type: "setTab", tabId, percent: 50 });
+  await settle();
+  ratio(await heard(tabId), base, gain(50), "and turns it down");
+  await send({ type: "setTab", tabId, percent: 100 });
+  await page.close();
+});
+
+test("version 1.0's page script left in an open tab doesn't stop the new one", async () => {
+  // Load 1.0's main.js and then this one into a plain page, the way an update leaves them, and drive them by hand.
+  const { execSync } = await import("node:child_process");
+  const old = execSync("git show v1.0.0:extension/content/main.js").toString();
+  const now = fs.readFileSync(EXT + "/content/main.js", "utf8");
+  const plain = await chromium.launch();   // no extension, so only these two copies run
+  const page = await plain.newPage();
+  await page.goto(origin + "/player");
+  const realVolume = await page.evaluate(([old, now]) => {
+    const native = Object.getOwnPropertyDescriptor(HTMLMediaElement.prototype, "volume");
+    const a = document.createElement("audio");
+    // Run 1.0 the way it ran in its own world, then the new copy.
+    new Function(old)();
+    window.dispatchEvent(new CustomEvent("nerdfader:level", { detail: 1 }));   // 1.0's last level: 100%
+    new Function(now)();
+    a.volume = 0.8;
+    window.dispatchEvent(new CustomEvent("nerdfader2:level", { detail: 0.125 }));
+    return [native.get.call(a), a.volume];
+  }, [old, now]);
+  near(realVolume[0], 0.8 * 0.125, "scaled once, by the new copy");
+  near(realVolume[1], 0.8, "page still sees its own volume");
+  await plain.close();
 });

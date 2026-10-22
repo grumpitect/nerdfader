@@ -217,12 +217,29 @@ chrome.runtime.onMessage.addListener((msg, sender, reply) => {
   const handler = handlers[msg?.type];
   if (!handler) return false;
   if (["hello", "status"].includes(msg.type) && !sender.tab) return false;
+  if (msg.tabId === undefined && sender.tab) msg.tabId = sender.tab.id;   // the in-page dialog doesn't know its tab id
   handler(msg, sender).then(reply, (err) => reply({ error: String(err) }));
   return true;   // reply arrives asynchronously
 });
 
+// Clicking the toolbar icon opens (or closes) the dialog in the page. Pages extensions can't reach get the toolbar
+// popup instead: it is set for that tab and opened, or opens on the next click where opening it directly isn't
+// supported.
+async function openPanel(tab) {
+  reconcile(tab.id, { opened: true });   // clicking the icon is what allows capture mode on this tab
+  try {
+    await chrome.scripting.executeScript({ target: { tabId: tab.id }, files: ["ui/panel.js", "ui/overlay.js"] });
+  } catch {
+    await chrome.action.setPopup({ tabId: tab.id, popup: "popup/popup.html" });
+    await chrome.action.openPopup?.({ windowId: tab.windowId }).catch(() => {});
+  }
+}
+chrome.action.onClicked.addListener(openPanel);
+
 // A tab that went quiet in capture mode starts capturing again when it plays.
 chrome.tabs.onUpdated.addListener(async (tabId, change) => {
+  // A new page may be one the dialog can open in again.
+  if (change.status === "loading") chrome.action.setPopup({ tabId, popup: "" }).catch(() => {});
   if (change.audible !== true) return;
   const capture = await get("session", key.capture(tabId), null);
   if (capture?.state === "idle") reconcile(tabId, { audible: true });
