@@ -54,11 +54,15 @@ globalThis.NerdfaderPanel = (() => {
 .nf .percent { width: 4ch; text-align: right; font-weight: 700; }
 
 .nf .bar { position: relative; flex: 1; display: flex; align-items: center; gap: 4px; color: var(--muted); }
-.nf .segments { flex: 1; display: grid; grid-template-columns: repeat(10, 1fr) 1px repeat(10, 1fr); gap: 2px; height: 16px; }
+.nf .segments {
+  flex: 1; display: grid; gap: 2px; height: 16px; justify-content: center;
+  grid-template-columns: repeat(10, var(--seg, 1fr)) 1px repeat(10, var(--seg, 1fr));
+}
 .nf .segments i { border-radius: 2px; background: var(--off); }
 .nf .segments i.on { background: var(--amber); }
 .nf .segments i.boost.on { background: var(--pink); }
-/* An empty column between the 10th and 11th segments marks 100%, so every segment keeps the same width. */
+/* An empty column between the 10th and 11th segments marks 100%. Segments get a whole number of pixels (--seg, set
+   from the space available) so the browser draws them all the same width instead of rounding some down. */
 
 /* The real slider sits invisibly on top of the segments: mouse, keyboard and screen readers all use it. */
 .nf .slider { position: absolute; inset: -6px 0; width: 100%; height: calc(100% + 12px); margin: 0; opacity: 0; cursor: pointer; }
@@ -107,6 +111,7 @@ globalThis.NerdfaderPanel = (() => {
 .nf .infoBtn.open, .nf .infoBtn:hover { color: var(--cyan); border-color: var(--cyan); }
 .nf .info { margin: 2px 0 8px 18px; padding: 8px 10px; border-left: 2px solid var(--cyan); font-size: 12px; color: var(--text); }
 .nf .info p + p { margin-top: 6px; }
+.nf .info p:has(b) + p:has(b) { margin-top: 2px; }   /* the Off and On lines sit together */
 .nf .info b { color: var(--cyan); font-weight: 700; }
 .nf .picks { display: flex; gap: 6px; margin: -2px 0 8px 18px; }
 .nf .pick { min-width: 30px; padding: 2px 6px; color: var(--muted); border-color: var(--off); }
@@ -115,6 +120,8 @@ globalThis.NerdfaderPanel = (() => {
 .nf .setting { display: flex; align-items: center; gap: 8px; padding-left: 18px; }
 .nf .setting .name { flex: 1; }
 .nf .shortcutBtn { min-width: 64px; }
+/* Modifier symbols (⌘⌥⇧⌃) in the system font: the monospace font has no proper ⇧ and borrows a mismatched one. */
+.nf .kbd { font-family: -apple-system, BlinkMacSystemFont, system-ui, "Segoe UI", sans-serif; font-weight: 600; letter-spacing: 0.06em; }
 .nf .shortcutBtn.recording { color: var(--pink); border-color: var(--pink); }
 
 .nf .offer { margin-top: 10px; padding: 10px; border: 1px dashed var(--pink); border-radius: 8px; font-size: 12px; }
@@ -177,7 +184,8 @@ globalThis.NerdfaderPanel = (() => {
   and players that load their media from another site. They still play, just not louder.</p>
   <p>Capture mode gets around that: Nerdfader records the tab's sound and plays it back louder. While it's on, the
   browser shows the tab as being shared, and it stops by itself when the tab goes quiet.</p>
-  <p><b>Off:</b> Nerdfader asks you on such a site. <b>On:</b> it just does it.</p>
+  <p><b>Off:</b> Nerdfader asks you on such a site.</p>
+  <p><b>On:</b> it just does it.</p>
 </div>
 <div class="rule"></div>
 <div class="setting">
@@ -193,7 +201,7 @@ globalThis.NerdfaderPanel = (() => {
 </label>
 <div class="hint altScrollHint"></div>
 <div class="picks">
-  <button class="pick" data-key="alt"></button><button class="pick" data-key="ctrl"></button><button class="pick" data-key="shift"></button><button class="pick" data-key="meta"></button>
+  <button class="pick kbd" data-key="alt"></button><button class="pick kbd" data-key="ctrl"></button><button class="pick kbd" data-key="shift"></button><button class="pick kbd" data-key="meta"></button>
 </div>
 <div class="rule"></div>
 <footer>
@@ -360,21 +368,21 @@ globalThis.NerdfaderPanel = (() => {
       $("override").checked = all;
       $("overrideHint").textContent = all ? "every tab plays at this volume" : "set every tab at once";
       $("alwaysToggle").checked = state.captureAlways;
-      $("captureHint").textContent = state.captureAlways
-        ? "boosts sites stuck at 100% · automatically"
-        : "boosts sites stuck at 100% · asks first";
+      $("captureHint").textContent = "if on, allows a volume boost by recording the tab";
 
-      const settings = state.settings ?? { shortcut: null, altScroll: true, scrollKey: "alt" };
+      const settings = state.settings ?? { shortcut: null, altScroll: true, scrollKey: "meta" };
       $("shortcutBtn").textContent = recording ? "press keys…" : shortcutLabel(settings.shortcut);
+      $("shortcutBtn").classList.toggle("kbd", !recording && !!settings.shortcut);
       $("shortcutBtn").classList.toggle("recording", recording);
       $("shortcutHint").innerHTML = "";
       $("shortcutHint").append(
         recording ? "Esc cancels, Delete removes it" : "opens this on any page",
         ...(state.browserShortcut !== undefined
-          ? [` · browser: ${state.browserShortcut || "none"} `, Object.assign(document.createElement("a"), { textContent: "change", className: "changeBrowser", tabIndex: -1 })]
+          ? [" · browser: ", Object.assign(document.createElement("span"), { textContent: state.browserShortcut || "none", className: state.browserShortcut ? "kbd" : "" }), " ",
+             Object.assign(document.createElement("a"), { textContent: "change", className: "changeBrowser", tabIndex: -1 })]
           : []),
       );
-      const key = settings.scrollKey ?? "alt";
+      const key = settings.scrollKey ?? "meta";
       $("altScrollToggle").checked = settings.altScroll;
       $("altScrollHint").textContent = settings.altScroll
         ? `hold ${modifierWords[key]} and scroll on any page` + (mac && key === "alt" ? " · trackpad only" : "")
@@ -497,6 +505,16 @@ globalThis.NerdfaderPanel = (() => {
     }
     // Only the popup listens itself; see above.
     if (!close) root.addEventListener("wheel", wheel, { passive: false });
+
+    // Whole-pixel segments: 20 of them, 20 gaps of 2 px and the 1 px 100% marker in the space the bar has.
+    const fitSegments = () => {
+      const segs = $("segments");
+      segs.style.removeProperty("--seg");
+      const width = Math.floor((segs.getBoundingClientRect().width - 41) / 20);
+      if (width > 0) segs.style.setProperty("--seg", `${width}px`);
+    };
+    fitSegments();
+    new ResizeObserver(fitSegments).observe(root);
 
     render();
     root.focus();

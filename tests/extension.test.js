@@ -607,18 +607,18 @@ test("boosting loud audio makes it clearly louder without crackling", async () =
   await page.close();
 });
 
-test("the shortcut (Option/Alt+Shift+V by default) opens and closes the dialog on the page; a new one can be recorded", async () => {
+test("the shortcut (Command+Shift+L by default) opens and closes the dialog on the page; a new one can be recorded", async () => {
   const { page, tabId } = await openTestPage();
-  await page.keyboard.press("Alt+Shift+KeyV");
+  await page.keyboard.press("Meta+Shift+KeyL");
   assert.equal(await until(() => dialogReady(page), 2000), true, "default shortcut opens");
-  await page.keyboard.press("Alt+Shift+KeyV");
+  await page.keyboard.press("Meta+Shift+KeyL");
   assert.equal(await until(async () => !(await dialogOpen(page)), 1000), true, "and closes");
 
   // Record Ctrl+Shift+K in the panel (the toolbar popup shows the same panel without a shadow root).
   const popup = await context.newPage();
   await popup.addInitScript(([tabId, url]) => { chrome.tabs.query = async () => [{ id: tabId, url }]; }, [tabId, page.url()]);
   await popup.goto(ext.url());
-  await popup.locator(".shortcutBtn", { hasText: "⌥⇧V" }).waitFor();
+  await popup.locator(".shortcutBtn", { hasText: "⇧⌘L" }).waitFor();
   await popup.click(".shortcutBtn");
   await popup.locator(".shortcutBtn", { hasText: "press keys" }).waitFor();
   await popup.keyboard.press("Control+Shift+KeyK");
@@ -627,7 +627,7 @@ test("the shortcut (Option/Alt+Shift+V by default) opens and closes the dialog o
   await settle();
 
   await page.bringToFront();
-  await page.keyboard.press("Alt+Shift+KeyV");
+  await page.keyboard.press("Meta+Shift+KeyL");
   await wait(400);
   assert.equal(await dialogOpen(page), false, "the old shortcut no longer opens it");
   await page.keyboard.press("Control+Shift+KeyK");
@@ -650,7 +650,7 @@ test("the shortcut (Option/Alt+Shift+V by default) opens and closes the dialog o
   await page.keyboard.press("Escape");
   await until(async () => !(await dialogOpen(page)), 1000);
 
-  await send({ type: "setSettings", shortcut: { code: "KeyV", alt: true, ctrl: false, meta: false, shift: true } });
+  await send({ type: "setSettings", shortcut: { code: "KeyL", alt: false, ctrl: false, meta: true, shift: true } });
   await page.close();
 });
 
@@ -659,9 +659,9 @@ test("Option/Alt + scroll changes the volume and shows the dialog for a moment; 
   await page.mouse.move(200, 200);
   const state = async () => (await send({ type: "state", tabId })).tab;
   const altWheel = async (...deltas) => {
-    await page.keyboard.down("Alt");
+    await page.keyboard.down("Meta");   // Command + scroll, the default
     for (const d of deltas) await page.mouse.wheel(0, d);
-    await page.keyboard.up("Alt");
+    await page.keyboard.up("Meta");
   };
   const closesWithin = (ms) => until(async () => !(await dialogOpen(page)), ms);
 
@@ -762,10 +762,10 @@ test("a continuous swipe that opens the dialog keeps changing the volume, by dis
   const { page, tabId } = await openTestPage();
   await page.mouse.move(300, 300);
   const cdp = await context.newCDPSession(page);
-  // 30 events of 20 CSS px (40 device px at this page's 2x scale), about 50 ms apart, Option held: 600 px, so one
+  // 30 events of 20 CSS px (40 device px at this page's 2x scale), about 50 ms apart, Command held: 600 px, so one
   // step to start and then one per 100 px.
   for (let i = 0; i < 30; i++) {
-    await cdp.send("Input.dispatchMouseEvent", { type: "mouseWheel", x: 300, y: 300, deltaX: 0, deltaY: 40, modifiers: 1 });
+    await cdp.send("Input.dispatchMouseEvent", { type: "mouseWheel", x: 300, y: 300, deltaX: 0, deltaY: 40, modifiers: 4 });   // Command held
     await wait(16);
   }
   await wait(400);
@@ -795,8 +795,8 @@ test("the scroll key can be changed; Control ignores trackpad pinches", async ()
 
   await send({ type: "setSettings", scrollKey: "ctrl" });
   await settle();
-  await wheelWith("Alt");
-  assert.equal(await state(), 100, "Option no longer does it");
+  await wheelWith("Meta");
+  assert.equal(await state(), 100, "Command no longer does it");
   // A pinch: a wheel event with ctrlKey set while the Control key isn't held.
   await page.evaluate(() => document.body.dispatchEvent(new WheelEvent("wheel", { deltaY: 100, ctrlKey: true, bubbles: true, cancelable: true })));
   await wait(500);
@@ -811,7 +811,7 @@ test("the scroll key can be changed; Control ignores trackpad pinches", async ()
   assert.equal(await until(async () => (await state()) === 150, 2000), true, "Shift + scroll does");
   await closeDialog();
 
-  await send({ type: "setSettings", scrollKey: "alt" });
+  await send({ type: "setSettings", scrollKey: "meta" });
   await send({ type: "setTab", tabId, percent: 100 });
   await page.close();
 });
@@ -829,13 +829,16 @@ test("capture mode's info button explains it without flipping the switch; the sc
   assert.equal(await popup.locator(".alwaysToggle").isChecked(), false, "switch untouched");
   await popup.click(".infoBtn");
   assert.equal(await popup.locator(".captureInfo").isVisible(), false, "and hidden again");
-  assert.match(await popup.locator(".captureHint").textContent(), /stuck at 100%/);
+  assert.equal(await popup.locator(".captureHint").textContent(), "if on, allows a volume boost by recording the tab");
+  const lines = await popup.locator(".captureInfo p").allTextContents();
+  assert.ok(lines.some((l) => l.startsWith("Off:")) && lines.some((l) => l.startsWith("On:")), "Off and On on their own lines");
 
-  await popup.click('.pick[data-key="meta"]');
-  await popup.locator('.pick.on[data-key="meta"]').waitFor();
-  assert.equal((await send({ type: "state", tabId })).settings.scrollKey, "meta", "saved");
-  assert.match(await popup.locator(".altScrollHint").textContent(), /Command/);
-  await send({ type: "setSettings", scrollKey: "alt" });
+  assert.equal(await popup.locator('.pick.on').getAttribute("data-key"), "meta", "Command by default");
+  await popup.click('.pick[data-key="alt"]');
+  await popup.locator('.pick.on[data-key="alt"]').waitFor();
+  assert.equal((await send({ type: "state", tabId })).settings.scrollKey, "alt", "saved");
+  assert.match(await popup.locator(".altScrollHint").textContent(), /Option/);
+  await send({ type: "setSettings", scrollKey: "meta" });
   await popup.close();
   await page.close();
 });
@@ -847,7 +850,7 @@ test("all 20 volume segments are the same width, with a gap marking 100%", async
   await popup.locator(".percent").waitFor();
   const widths = await popup.evaluate(() => [...document.querySelectorAll(".segments i")].map((i) => Math.round(i.getBoundingClientRect().width * 10) / 10));
   assert.equal(widths.length, 20);
-  assert.ok(Math.max(...widths) - Math.min(...widths) < 0.6, `equal widths: ${widths.join(", ")}`);
+  assert.ok(widths.every((w) => w === widths[0] && Number.isInteger(w)), `equal, whole-pixel widths: ${widths.join(", ")}`);
   const [ten, eleven, nine] = await popup.evaluate(() => [10, 11, 9].map((n) => document.querySelectorAll(".segments i")[n - 1].getBoundingClientRect()));
   assert.ok(eleven.left - ten.right > (ten.left - nine.right) + 0.5, "a wider gap between 100% and the boost half");
   await popup.close();

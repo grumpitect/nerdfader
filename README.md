@@ -30,14 +30,15 @@ Made for the [Nerdative](https://www.youtube.com/@nerdative) channel on YouTube,
 - **all_tabs.** Turn it on and one slider sets every tab, including ones you open later. Turn it off and every
   tab goes back to the volume it had before.
 - **Badge.** The toolbar icon shows the tab's volume when it isn't 100%.
-- **Shortcut.** **⌥⇧V** (Alt+Shift+V elsewhere) opens and closes the dialog. Record your own in the dialog (click
+- **Shortcut.** **⌘⇧L** (Ctrl+Shift+L elsewhere) opens and closes the dialog. Record your own in the dialog (click
   the shortcut, press the keys; Delete removes it): it works on any page and inside embedded players. The browser's
   own shortcut also works from the address bar; change it at `arc://extensions/shortcuts` (the dialog links there).
-- **Modifier + scroll.** Hold Option (Alt) and scroll anywhere, with a mouse wheel or two fingers on a trackpad, to
+  If the browser already uses that key itself, it leaves the browser-level shortcut unassigned; pick another there.
+- **Modifier + scroll.** Hold Command (the Windows key elsewhere) and scroll anywhere, with a mouse wheel or two fingers on a trackpad, to
   change the tab's volume: scrolling down turns it up (with macOS natural scrolling, that's a two-finger swipe up).
   The dialog shows for a moment and follows along while you keep scrolling; it goes away 2 seconds after you stop.
-  Click or type in it and it stays until you click away or press Esc. Pick the key in **scroll_volume**: ⌥ Option,
-  ⌃ Control, ⇧ Shift or ⌘ Command (or turn it off). On a Mac, Option works with a trackpad only (macOS doesn't
+  Click or type in it and it stays until you click away or press Esc. Pick the key in **scroll_volume**: ⌘ Command
+  (the default), ⌥ Option, ⌃ Control or ⇧ Shift (or turn it off). On a Mac, Option works with a trackpad only (macOS doesn't
   pass Option + mouse wheel to pages); with a mouse, pick another key. A trackpad pinch never counts as Control +
   scroll. The page doesn't rubber-band while the dialog is up, so a hard swipe at the top or bottom of a page stays
   with the dialog.
@@ -46,7 +47,7 @@ Made for the [Nerdative](https://www.youtube.com/@nerdative) channel on YouTube,
   the dialog works too. The dialog keeps the keyboard itself, so no control inside it takes focus or shows a focus
   ring (Tab doesn't step through it).
 - **Four-finger gestures?** macOS keeps three- and four-finger trackpad gestures to itself; web pages and extensions
-  never see them. To open Nerdfader with one, map the gesture to ⌥⇧V in a tool like
+  never see them. To open Nerdfader with one, map the gesture to ⌘⇧L in a tool like
   [BetterTouchTool](https://folivora.ai).
 - **The site doesn't notice.** YouTube's own volume slider keeps working and keeps showing its own value;
   Nerdfader scales whatever the site plays.

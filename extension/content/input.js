@@ -1,5 +1,5 @@
 // Runs in the extension's isolated world in every frame: the shortcut that opens the dialog, and modifier + scroll
-// (Option by default), which changes the tab's volume and shows the dialog for a moment. While the dialog is up, any
+// (Command by default), which changes the tab's volume and shows the dialog for a moment. While the dialog is up, any
 // scroll over it changes the volume too, handled here as well: one place counts every scroll, so a swipe that opens
 // the dialog keeps going without a hiccup.
 // Settings come from the background ({ shortcut, altScroll, scrollKey }) when the page loads and whenever they change.
@@ -9,7 +9,7 @@
   if (typeof previous === "function" && previous()) return;
   window.__nerdfaderInput = connected;
 
-  let settings = { shortcut: null, altScroll: true, scrollKey: "alt" };
+  let settings = { shortcut: null, altScroll: true, scrollKey: "meta" };
   const ask = (msg) => (connected() ? chrome.runtime.sendMessage(msg) : Promise.reject(new Error("disconnected")));
   ask({ type: "getSettings" }).then((s) => s && !s.error && (settings = s), () => {});
   chrome.runtime.onMessage.addListener((msg) => { if (msg?.type === "settings") settings = msg.settings; });
@@ -35,7 +35,7 @@
   const onModifier = (e) => { if (e.key === "Control") controlHeld = e.type === "keydown"; };
   const keys = ["alt", "ctrl", "shift", "meta"];
   function scrollKeyHeld(e) {
-    const chosen = settings.scrollKey ?? "alt";
+    const chosen = settings.scrollKey ?? "meta";
     if (chosen === "ctrl" && !controlHeld) return false;
     return keys.every((k) => e[k + "Key"] === (k === chosen));
   }

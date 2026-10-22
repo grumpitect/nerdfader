@@ -327,9 +327,9 @@ test("copying new files into the folder makes the extension reload itself once, 
   near((await realVolume(p.tabId))[0], gain(40), "volume");
   if (headless.length) await p.page.bringToFront();
   await p.page.mouse.move(300, 300);
-  await p.page.keyboard.down("Alt");
+  await p.page.keyboard.down("Meta");
   await p.page.mouse.wheel(0, 100);   // down is louder
-  await p.page.keyboard.up("Alt");
+  await p.page.keyboard.up("Meta");
   assert.equal(await until(async () => (await state(p.tabId)).tab === 45, 2000), true, "Option + scroll on the old tab");
   await p.page.keyboard.press("Escape");
   await call({ type: "setTab", tabId: p.tabId, percent: 100 });
@@ -383,17 +383,21 @@ test("shortcuts: the browser shortcut is registered, the page shortcut toggles t
   // Chrome assigns an extension's default browser shortcut on a fresh install only (not when an update adds it).
   if (id) await cdp.send("Extensions.uninstall", { id });
   await install("working tree");
-  assert.equal((await call({ type: "state", tabId: 0 })).browserShortcut, "⌥⇧V", "browser-level shortcut on a fresh install");
+  // If a browser already uses the key itself it leaves Nerdfader's browser-level shortcut unassigned (then the
+  // in-page shortcut below still does the job, and the dialog shows "browser: none · change").
+  const browserShortcut = (await call({ type: "state", tabId: 0 })).browserShortcut;
+  console.log(`    browser-level shortcut on a fresh install: "${browserShortcut}"`);
+  assert.ok(["⇧⌘L", ""].includes(browserShortcut), `browser-level shortcut is ⇧⌘L or unassigned (got "${browserShortcut}")`);
   const p = await open(`${origin}/player?src=/tone.wav`);
-  await p.page.keyboard.press("Alt+Shift+KeyV");
+  await p.page.keyboard.press("Meta+Shift+KeyL");
   assert.equal(await until(async () => (await dialog(p.page)) === "ready", 3000), true, "page shortcut opens");
-  await p.page.keyboard.press("Alt+Shift+KeyV");
+  await p.page.keyboard.press("Meta+Shift+KeyL");
   assert.equal(await until(async () => (await dialog(p.page)) === "closed", 1000), true, "and closes");
 
   // Held down: macOS repeats the keys about every 35 ms after half a second. The dialog stays; a new press closes it.
   const keys = await ctx.newCDPSession(p.page);
   const key = (type, autoRepeat = false) =>
-    keys.send("Input.dispatchKeyEvent", { type, modifiers: 1 | 8, key: "V", code: "KeyV", windowsVirtualKeyCode: 86, autoRepeat });
+    keys.send("Input.dispatchKeyEvent", { type, modifiers: 4 | 8, key: "L", code: "KeyL", windowsVirtualKeyCode: 76, autoRepeat });
   await key("rawKeyDown");
   await wait(450);
   for (let i = 0; i < 15; i++) { await key("rawKeyDown", true); await wait(35); }
@@ -405,9 +409,9 @@ test("shortcuts: the browser shortcut is registered, the page shortcut toggles t
   assert.equal(await until(async () => (await dialog(p.page)) === "closed", 1000), true, "a new press closes it");
 
   await p.page.mouse.move(300, 300);
-  await p.page.keyboard.down("Alt");
+  await p.page.keyboard.down("Meta");
   await p.page.mouse.wheel(0, 100);   // down is louder
-  await p.page.keyboard.up("Alt");
+  await p.page.keyboard.up("Meta");
   assert.equal(await until(async () => (await state(p.tabId)).tab === 125, 2000), true, "Option + scroll: one step");
   assert.equal(await until(async () => (await dialog(p.page)) === "ready", 2000), true, "dialog shows");
   assert.equal(await until(async () => (await dialog(p.page)) === "closed", 3500), true, "and hides by itself");
