@@ -126,15 +126,16 @@ real output with tab capture, so they're silent.
 
 ```bash
 npm run test:real          # the same in your installed Google Chrome, the way a person uses it (no window)
-npm run test:real:window   # with a visible window, which browser-level shortcuts need
+npm run test:real:window   # just the browser-level shortcut, which needs a window (briefly, bottom-left corner)
 ```
 
 `test:real` starts Google Chrome with a throwaway profile and drives it over its debugging protocol, which can load
 the extension and click its toolbar icon for real. It installs 1.0.0 and updates it over open tabs, reloads it while
 tabs play, opens the dialog, uses the shortcuts and Option + scroll, runs capture mode under Chrome's real "only after
 you clicked it on this tab" rule, plays a DRM (ClearKey) stream, and visits YouTube, Vimeo, Facebook and Twitch,
-failing on anything that shows up under Errors in chrome://extensions. Its audio output is off, so it's silent. Run
-the window version before releases: only it presses the browser-level shortcut (headless Chrome has no browser UI).
+failing on anything that shows up under Errors in chrome://extensions. Its audio output is off, so it's silent, and it never shows a window. The
+window version covers only the browser-level shortcut, which headless Chrome can't (it has no browser UI);
+release.sh runs both.
 Set `CHROME` to use another Chromium-based browser's binary.
 
 To try a change, load the `extension` folder with **Load unpacked** and click the reload arrow after editing.

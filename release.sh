@@ -7,7 +7,8 @@
 #   ./release.sh major      1.1.0 -> 2.0.0
 #   ./release.sh 1.2.3      set an exact version
 #
-# Steps: checks the tree is clean and tests pass (npm test, and npm run test:real:window in Google Chrome), bumps "version" in extension/manifest.json, zips the extension
+# Steps: checks the tree is clean and tests pass (npm test; npm run test:real, headless, in Google Chrome; and
+# npm run test:real:window, the browser-shortcut test, which briefly opens a Chrome window), bumps "version" in extension/manifest.json, zips the extension
 # (a Nerdfader folder ready for "Load unpacked"), commits "Release vX.Y.Z", tags and pushes, and creates the
 # GitHub release with the zip attached. Needs the GitHub CLI (`gh`) signed in and `npm install` done once.
 set -euo pipefail
@@ -30,7 +31,9 @@ echo "Releasing $tag (was $current)"
 
 results=$(npm test 2>&1) || { echo "$results" | tail -30; echo "error: tests failed"; exit 1; }
 echo "$results" | grep -E "^ℹ (pass|fail)" | tr '\n' ' '; echo
-echo "real Chrome (with a window, so browser shortcuts are covered too):"
+results=$(npm run test:real 2>&1) || { echo "$results" | tail -30; echo "error: real-Chrome tests failed"; exit 1; }
+echo "$results" | grep -E "^ℹ (pass|fail)" | tr '\n' ' '; echo
+echo "browser-level shortcut test: a Chrome window may appear in the bottom-left corner for a few seconds"
 results=$(npm run test:real:window 2>&1) || { echo "$results" | tail -30; echo "error: real-Chrome tests failed"; exit 1; }
 echo "$results" | grep -E "^ℹ (pass|fail)" | tr '\n' ' '; echo
 previous=$(git describe --tags --abbrev=0 2>/dev/null || true)

@@ -1,7 +1,8 @@
 // Tests in real Google Chrome, the way a person uses Nerdfader: installed as an unpacked extension, updated and
 // reloaded over open tabs, opened by clicking its toolbar icon, and tried on real sites. `npm run test:real` runs it
-// headless (no window); `npm run test:real:window` shows the window, which is also the only way browser-level
-// shortcuts fire (they come from the browser's own UI, which headless Chrome doesn't have).
+// all headless (no window, never takes focus). `npm run test:real:window` runs only the shortcut test with a window,
+// the one thing headless can't cover (browser-level shortcuts come from the browser's own UI); that window sits in
+// the bottom-left corner, mostly off-screen, and may briefly come to the front.
 //
 // Chrome is started with a throwaway profile and driven over its debugging protocol, which can load extensions and
 // click their toolbar icon for real (Extensions.loadUnpacked, Extensions.triggerAction), so capture mode runs under
@@ -79,6 +80,7 @@ const files = {
 };
 
 let server, origin, other, chrome, profile, browser, cdp, ctx, devPage, extDir, id;
+const headless = process.env.HEADLESS ? ["--headless=new"] : [];
 
 before(async () => {
   server = http.createServer((req, res) => {
@@ -93,8 +95,9 @@ before(async () => {
   profile = fs.mkdtempSync(path.join(os.tmpdir(), "nerdfader-chrome-"));
   extDir = path.join(profile, "Nerdfader");   // one folder, updated in place, like the install command does
   const port = 9300 + Math.floor(Math.random() * 600);
-  // HEADLESS=1 runs Chrome without a window (same browser, no UI).
-  const headless = process.env.HEADLESS ? ["--headless=new"] : [];
+  // HEADLESS=1 runs Chrome without a window (same browser, no UI). Otherwise Chrome has a window, kept out of the way:
+  // it starts with none (so it doesn't take focus), opens one in the background, and moves it to the bottom-left
+  // corner, as far off-screen as macOS allows (a sliver stays visible), with throttling of hidden windows turned off.
   chrome = spawn(CHROME, [
     ...headless,
     `--user-data-dir=${profile}/profile`, `--remote-debugging-port=${port}`, "--enable-unsafe-extension-debugging",
@@ -103,11 +106,10 @@ before(async () => {
     "--disable-features=MediaSessionService",
     // No sound reaches the speakers; pages still play, count as playing sound, and can be captured.
     "--disable-audio-output",
-    "--window-position=40,40", "--window-size=1000,700",
+    "--disable-backgrounding-occluded-windows", "--disable-renderer-backgrounding", "--disable-background-timer-throttling",
     // No macOS "reopen windows?" prompt for this throwaway Chrome (headless has no windows, and would read "YES" as
     // a second page to open).
-    ...(headless.length ? [] : ["-ApplePersistenceIgnoreState", "YES"]),
-    "about:blank",
+    ...(headless.length ? ["about:blank"] : ["--no-startup-window", "-ApplePersistenceIgnoreState", "YES"]),
   ], { stdio: "ignore" });
   for (let i = 0; i < 100 && !browser; i++) {
     await wait(200);
@@ -115,6 +117,12 @@ before(async () => {
   }
   cdp = await browser.newBrowserCDPSession();
   ctx = browser.contexts()[0];
+  if (!headless.length) {
+    const { targetId } = await cdp.send("Target.createTarget", { url: "about:blank", newWindow: true, background: true });
+    const { windowId } = await cdp.send("Browser.getWindowForTarget", { targetId });
+    await cdp.send("Browser.setWindowBounds", { windowId, bounds: { left: -6000, top: 6000, width: 1000, height: 700 } });
+    await until(async () => ctx.pages().length > 0, 3000);
+  }
   devPage = ctx.pages()[0];
   await devPage.goto("chrome://extensions");
   await devPage.evaluate(() => chrome.developerPrivate.updateProfileConfiguration({ inDeveloperMode: true }));
@@ -154,8 +162,17 @@ const errors = () =>
   }, id);
 const clearErrors = () => devPage.evaluate((id) => chrome.developerPrivate.deleteExtensionErrors({ extensionId: id }), id);
 
+// A new tab, opened in the background so the test Chrome never comes in front of your apps.
+async function newTab(url = "about:blank") {
+  const known = new Set(ctx.pages());
+  await cdp.send("Target.createTarget", { url: "about:blank", background: true });
+  const page = await until(async () => ctx.pages().find((p) => !known.has(p)), 5000);
+  if (url !== "about:blank") await page.goto(url, { waitUntil: "domcontentloaded", timeout: 20000 });
+  return page;
+}
+
 async function open(url) {
-  const page = await ctx.newPage();
+  const page = await newTab();
   await page.goto(url, { waitUntil: "domcontentloaded", timeout: 20000 });
   const tabId = await bg(async (url) => {
     const tabs = await chrome.tabs.query({});
@@ -170,7 +187,7 @@ async function tabTarget(page) {
 }
 // A real click on Nerdfader's toolbar icon, for the tab showing this page.
 async function clickIcon(page) {
-  await page.bringToFront();
+  if (headless.length) await page.bringToFront();   // with a window this would bring Chrome in front of your apps
   await cdp.send("Extensions.triggerAction", { id, targetId: await tabTarget(page) });
 }
 const dialog = (page) => page.evaluate(() => {
@@ -291,14 +308,12 @@ test("copying new files into the folder makes the extension reload itself once, 
   // An update lands in the folder (install.sh and the dev copy swap the whole folder at once).
   const file = path.join(extDir, "content/input.js");
   fs.writeFileSync(file, fs.readFileSync(file, "utf8") + "\n// updated\n");
-  const other = await ctx.newPage();
-  await other.goto(`${origin}/player?another=1`);   // any page load lets the extension notice
+  const other = await newTab(`${origin}/player?another=1`);   // any page load lets the extension notice
   assert.equal(await until(async () => (await marker()) === null, 8000), true, "reloaded by itself");
   await bg(() => { self.__marker = "new"; });
   for (let i = 0; i < 4; i++) {   // page loads and tab switches after the update must not reload it again
-    const extra = await ctx.newPage();
-    await extra.goto(`${origin}/player?more=${i}`);
-    await p.page.bringToFront();
+    const extra = await newTab(`${origin}/player?more=${i}`);
+    if (headless.length) await p.page.bringToFront();
     await wait(1000);
     await extra.close();
   }
@@ -310,7 +325,7 @@ test("copying new files into the folder makes the extension reload itself once, 
   await call({ type: "setTab", tabId: p.tabId, percent: 40 });
   await wait(300);
   near((await realVolume(p.tabId))[0], gain(40), "volume");
-  await p.page.bringToFront();
+  if (headless.length) await p.page.bringToFront();
   await p.page.mouse.move(300, 300);
   await p.page.keyboard.down("Alt");
   await p.page.mouse.wheel(0, -100);
@@ -366,7 +381,7 @@ test("the toolbar icon opens the dialog quickly, keys stay in it, and it closes 
 
 test("shortcuts: the browser shortcut is registered, the page shortcut toggles the dialog, Option + scroll shows it for a moment", async () => {
   // Chrome assigns an extension's default browser shortcut on a fresh install only (not when an update adds it).
-  await cdp.send("Extensions.uninstall", { id });
+  if (id) await cdp.send("Extensions.uninstall", { id });
   await install("working tree");
   assert.equal((await call({ type: "state", tabId: 0 })).browserShortcut, "⌥⇧V", "browser-level shortcut on a fresh install");
   const p = await open(`${origin}/player?src=/tone.wav`);
@@ -403,9 +418,8 @@ test("shortcuts: the browser shortcut is registered, the page shortcut toggles t
 });
 
 test("on pages extensions can't touch, the icon opens the toolbar popup", async () => {
-  const page = await ctx.newPage();
-  await page.goto("chrome://version");
-  await page.bringToFront();
+  const page = await newTab("chrome://version");
+  if (headless.length) await page.bringToFront();
   const { targetInfos } = await cdp.send("Target.getTargets", { filter: [{ type: "tab" }] });
   await cdp.send("Extensions.triggerAction", { id, targetId: targetInfos.find((t) => t.url.startsWith("chrome://version")).targetId });
   const popup = await until(async () => (await cdp.send("Target.getTargets")).targetInfos.find((t) => t.url.endsWith("/popup/popup.html")), 3000);
