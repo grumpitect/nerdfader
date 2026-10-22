@@ -237,6 +237,10 @@ test("updating from 1.0 over open tabs: no errors, and those tabs work with the 
 test("updating from the 15:36 build Jay had in Arc over a playing tab: no errors on play and pause", async () => {
   await install("12383df");   // its bridge.js threw when cut off and the page reported status
   const player = await open(`${origin}/player?src=${other}/tone.wav`);
+  // Its dialog left open across the update kept refreshing and threw twice a second (Jay's 30nama tab).
+  await clickIcon(player.page);
+  assert.equal(await until(async () => (await dialog(player.page)) !== "closed", 3000), true, "old dialog open");
+  await wait(500);   // (that build doesn't mark its dialog ready; give it time to load its values)
   await call({ type: "setTab", tabId: player.tabId, percent: 300 });   // makes the page report "cross-origin"
   await wait(500);
   await clearErrors();
@@ -247,6 +251,8 @@ test("updating from the 15:36 build Jay had in Arc over a playing tab: no errors
     await wait(300);
   }
   assert.equal((await state(player.tabId)).status, "cross-origin", "the new version hears the page");
+  assert.equal(await dialog(player.page), "closed", "the new version closed the old dialog");
+  await wait(1500);
   assert.deepEqual(await errors(), [], "the old cut-off copies stay quiet");
   await call({ type: "setTab", tabId: player.tabId, percent: 100 });
   await player.page.close();

@@ -407,6 +407,11 @@ function badgeColors() {
 async function attachToOpenTabs() {
   for (const tab of await chrome.tabs.query({ url: ["http://*/*", "https://*/*", "file:///*"] })) {
     const target = { tabId: tab.id, allFrames: true };
+    // A dialog left open by the previous version is cut off now; asking it to close also stops its refreshes.
+    chrome.scripting.executeScript({
+      target: { tabId: tab.id },
+      func: () => document.querySelectorAll("nerdfader-dialog").forEach((d) => d.dispatchEvent(new Event("nerdfader-close"))),
+    }).catch(() => {});
     chrome.scripting
       .executeScript({ target, files: ["content/main.js"], world: "MAIN", injectImmediately: true })
       .then(() => chrome.scripting.executeScript({ target, files: ["content/bridge.js", "content/input.js"] }))
