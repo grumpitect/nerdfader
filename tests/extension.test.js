@@ -720,3 +720,40 @@ test("Option/Alt + scroll changes the volume and shows the dialog for a moment; 
   await page.close();
 });
 
+
+test("nothing in the panel takes focus or shows a focus ring; the panel keeps the keys", async () => {
+  const { page, tabId } = await openTestPage();
+  const popup = await context.newPage();
+  await popup.addInitScript(([tabId, url]) => { chrome.tabs.query = async () => [{ id: tabId, url }]; }, [tabId, page.url()]);
+  await popup.goto(ext.url());
+  await popup.locator(".percent", { hasText: "100%" }).waitFor();
+  const focusables = await popup.evaluate(() => [...document.querySelectorAll(".nf button, .nf input, .nf a")].filter((e) => e.tabIndex >= 0).length);
+  assert.equal(focusables, 0, "no control is in the Tab order");
+  const active = () => popup.evaluate(() => document.activeElement.className);
+  assert.match(await active(), /\bnf\b/, "the panel holds focus");
+  await popup.click("label.toggle >> nth=0");   // all_tabs on
+  assert.match(await active(), /\bnf\b/, "clicking a switch leaves focus on the panel");
+  await popup.click("label.toggle >> nth=0");   // and off again
+  await popup.keyboard.press("Tab");
+  assert.match(await active(), /\bnf\b/, "Tab doesn't move focus");
+  await popup.keyboard.press("5");
+  await popup.locator(".percent", { hasText: "50%" }).waitFor();
+  const outlines = await popup.evaluate(() => {
+    const slider = document.querySelector(".slider");
+    slider.focus();
+    return [getComputedStyle(slider).outlineStyle, getComputedStyle(document.querySelector(".nf")).outlineStyle];
+  });
+  assert.deepEqual(outlines, ["none", "none"], "no focus ring, even on the slider while dragging");
+
+  // "c" takes up the capture-mode offer.
+  await send({ type: "setTab", tabId, percent: 300 });
+  await popup.evaluate(() => document.querySelector(".nf").focus());
+  await popup.reload();
+  await page.evaluate(() => { const a = document.getElementById("a"); a.src = location.origin.replace("127.0.0.1", "localhost") + "/tone.wav"; return a.play(); });
+  await popup.locator(".offer:not([hidden])").waitFor({ timeout: 5000 });
+  await popup.keyboard.press("c");
+  assert.equal(await until(async () => (await send({ type: "state", tabId })).allowed, 3000), true, "c allows capture mode");
+  await send({ type: "setTab", tabId, percent: 100 });
+  await popup.close();
+  await page.close();
+});

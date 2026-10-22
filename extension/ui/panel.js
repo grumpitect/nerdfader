@@ -29,6 +29,9 @@ globalThis.NerdfaderPanel = (() => {
   user-select: none;
 }
 .nf * { box-sizing: border-box; }
+/* Nothing in the panel takes keyboard focus or shows a focus ring: the panel itself holds focus and handles keys. */
+.nf, .nf * { outline: none !important; }
+.nf ::-moz-focus-inner { border: 0; }
 .nf p { margin: 0; }
 
 .nf header { display: flex; justify-content: space-between; align-items: baseline; }
@@ -59,7 +62,6 @@ globalThis.NerdfaderPanel = (() => {
 
 /* The real slider sits invisibly on top of the segments: mouse, keyboard and screen readers all use it. */
 .nf .slider { position: absolute; inset: -6px 0; width: 100%; height: calc(100% + 12px); margin: 0; opacity: 0; cursor: pointer; }
-.nf .bar:has(.slider:focus-visible) .segments { outline: 1px dashed var(--cyan); outline-offset: 3px; }
 
 .nf .row { display: flex; justify-content: space-between; align-items: center; margin-top: 8px; min-height: 26px; }
 .nf .note { color: var(--muted); font-size: 12px; }
@@ -86,7 +88,6 @@ globalThis.NerdfaderPanel = (() => {
 .nf .caret { color: var(--pink); visibility: hidden; }
 .nf .toggle input:checked ~ .caret { visibility: visible; }
 .nf .toggle input:checked ~ .name { color: var(--pink); }
-.nf .toggle input:focus-visible ~ .name { outline: 1px dashed var(--cyan); outline-offset: 2px; }
 .nf .name { flex: 1; }
 .nf .switch { width: 30px; height: 16px; border-radius: 8px; background: var(--off); position: relative; transition: background 0.15s; }
 .nf .switch::after {
@@ -139,7 +140,7 @@ globalThis.NerdfaderPanel = (() => {
 <div class="offer" hidden>
   <p class="offerText"></p>
   <div class="buttons">
-    <button class="captureOnce primary">use capture mode</button>
+    <button class="captureOnce primary" title="c">use capture mode</button>
     <button class="captureAlways">always</button>
   </div>
   <p class="hint">The tab shows as shared while it's boosted. Capture stops when the tab goes quiet.</p>
@@ -227,6 +228,13 @@ globalThis.NerdfaderPanel = (() => {
 
     root.classList.add("nf");
     root.innerHTML = html;
+    root.tabIndex = -1;
+    for (const el of root.querySelectorAll("button, input, a")) el.tabIndex = -1;
+    // Clicking a button or switch leaves focus on the panel (so no control ever looks focused); the slider still
+    // gets the press, so dragging works.
+    root.addEventListener("mousedown", (e) => {
+      if (e.target !== root && !e.target.classList?.contains("slider")) e.preventDefault();
+    });
     if (close) $("keys").textContent += " · esc close";
     $("version").textContent = "v" + chrome.runtime.getManifest().version;
 
@@ -334,7 +342,7 @@ globalThis.NerdfaderPanel = (() => {
       $("shortcutHint").append(
         recording ? "Esc cancels, Delete removes it" : "opens this on any page",
         ...(state.browserShortcut !== undefined
-          ? [` · browser: ${state.browserShortcut || "none"} `, Object.assign(document.createElement("a"), { textContent: "change", className: "changeBrowser" })]
+          ? [` · browser: ${state.browserShortcut || "none"} `, Object.assign(document.createElement("a"), { textContent: "change", className: "changeBrowser", tabIndex: -1 })]
           : []),
       );
       $("altScrollToggle").checked = settings.altScroll;
@@ -349,7 +357,7 @@ globalThis.NerdfaderPanel = (() => {
       state.override.on = e.target.checked;
       render();
       send("setOverride", { on: e.target.checked });
-      $("slider").focus();
+      root.focus();
     });
     $("captureOnce").addEventListener("click", () => {
       state.allowed = true;
@@ -365,7 +373,7 @@ globalThis.NerdfaderPanel = (() => {
       state.captureAlways = e.target.checked;
       render();
       send("setCapture", { always: e.target.checked });
-      $("slider").focus();
+      root.focus();
     });
 
     $("shortcutBtn").addEventListener("click", () => { recording = !recording; render(); });
@@ -374,7 +382,7 @@ globalThis.NerdfaderPanel = (() => {
     });
     $("altScrollToggle").addEventListener("change", (e) => {
       saveSettings({ altScroll: e.target.checked });
-      $("slider").focus();
+      root.focus();
     });
 
     // While recording, the next key press with a non-modifier key becomes the shortcut.
@@ -387,12 +395,18 @@ globalThis.NerdfaderPanel = (() => {
       if (e.key === "Escape" && plain) return render();
       if ((e.key === "Backspace" || e.key === "Delete") && plain) return saveSettings({ shortcut: null });
       saveSettings({ shortcut: { code: e.code, alt: e.altKey, ctrl: e.ctrlKey, meta: e.metaKey, shift: e.shiftKey } });
-      $("slider").focus();
+      root.focus();
     }
 
     const editable = () => state.override.on || supported;
     root.addEventListener("keydown", (e) => {
       if (recording) return record(e);
+      if (e.key === "Tab") { e.preventDefault(); return; }   // nothing to move to, and focus stays in the panel
+      if (e.key === "c" && !$("offer").hidden && !e.metaKey && !e.ctrlKey && !e.altKey) {
+        e.preventDefault();
+        $("captureOnce").click();   // "use capture mode" from the keyboard
+        return;
+      }
       if (e.key === "Escape" && close) { e.preventDefault(); close(); return; }
       const s = state.settings?.shortcut;
       if (close && s && e.code === s.code && e.altKey === s.alt && e.ctrlKey === s.ctrl && e.metaKey === s.meta && e.shiftKey === s.shift) {
@@ -437,7 +451,7 @@ globalThis.NerdfaderPanel = (() => {
     if (!close) root.addEventListener("wheel", wheel, { passive: false });
 
     render();
-    $("slider").focus();
+    root.focus();
     return { destroy: () => clearInterval(poll), wheel };
   }
 

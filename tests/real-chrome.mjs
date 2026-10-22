@@ -435,10 +435,7 @@ test("capture mode under Chrome's real rules: offered, started from the dialog, 
   await until(async () => (await dialog(p.page)) === "ready");
   await p.page.keyboard.press("End");   // 600%
   assert.equal(await until(async () => (await state(p.tabId)).status === "cross-origin", 2000), true);
-  // Tab from the slider: reset, then "use capture mode".
-  await p.page.keyboard.press("Tab");
-  await p.page.keyboard.press("Tab");
-  await p.page.keyboard.press("Enter");
+  await p.page.keyboard.press("c");   // "use capture mode" from the keyboard
   assert.equal(await until(async () => (await state(p.tabId)).capture === "on", 3000), true, "capture started");
   await wait(400);   // the boost glides in
   const stats = await bg(() => chrome.runtime.sendMessage({ target: "offscreen", type: "stats" }));

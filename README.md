@@ -39,7 +39,9 @@ Made for the [Nerdative](https://www.youtube.com/@nerdative) channel on YouTube,
   a trackpad; macOS browsers don't pass Option + mouse-wheel scrolling to pages at all, so with a mouse use the
   shortcut instead.
 - **Keyboard and mouse wheel in the dialog.** ←/→ change by 5% (25% above 100%; hold Shift for finer steps), **0**
-  to **9** jump to 0 to 90%, **r** resets, **Esc** closes, and scrolling over the dialog works too.
+  to **9** jump to 0 to 90%, **r** resets, **c** takes up the capture-mode offer, **Esc** closes, and scrolling over
+  the dialog works too. The dialog keeps the keyboard itself, so no control inside it takes focus or shows a focus
+  ring (Tab doesn't step through it).
 - **Four-finger gestures?** macOS keeps three- and four-finger trackpad gestures to itself; web pages and extensions
   never see them. To open Nerdfader with one, map the gesture to ⌥⇧V in a tool like
   [BetterTouchTool](https://folivora.ai).
