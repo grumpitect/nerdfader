@@ -97,6 +97,12 @@ globalThis.NerdfaderPanel = (() => {
 .nf .toggle input:checked ~ .switch::after { transform: translateX(14px); }
 
 .nf .hint { color: var(--muted); font-size: 12px; margin: 4px 0 8px 18px; }
+.nf .hint a { color: var(--cyan); cursor: pointer; text-decoration: none; }
+.nf .hint a:hover { text-decoration: underline; }
+.nf .setting { display: flex; align-items: center; gap: 8px; padding-left: 18px; }
+.nf .setting .name { flex: 1; }
+.nf .shortcutBtn { min-width: 64px; }
+.nf .shortcutBtn.recording { color: var(--pink); border-color: var(--pink); }
 
 .nf .offer { margin-top: 10px; padding: 10px; border: 1px dashed var(--pink); border-radius: 8px; font-size: 12px; }
 .nf [hidden] { display: none !important; }
@@ -154,10 +160,35 @@ globalThis.NerdfaderPanel = (() => {
 </label>
 <div class="hint captureHint"></div>
 <div class="rule"></div>
+<div class="setting">
+  <span class="name">shortcut</span>
+  <button class="shortcutBtn" title="Click, then press the keys you want (Esc cancels, Delete removes it)"></button>
+</div>
+<div class="hint shortcutHint"></div>
+<label class="toggle">
+  <input type="checkbox" class="altScrollToggle">
+  <span class="caret">&gt;</span>
+  <span class="name">option_scroll</span>
+  <span class="switch" aria-hidden="true"></span>
+</label>
+<div class="hint altScrollHint"></div>
+<div class="rule"></div>
 <footer>
   <span class="keys">←/→ · 0 to 9 · r reset</span>
   <a href="https://github.com/grumpitect/nerdfader/issues/new/choose" target="_blank" rel="noopener">feedback ↗</a>
 </footer>`;
+
+  // A shortcut as the platform writes it: ⌃⌥⇧⌘V on a Mac, Ctrl+Alt+Shift+V elsewhere.
+  const mac = /Mac/.test(navigator.platform);
+  function shortcutLabel(s) {
+    if (!s) return "none";
+    const names = { ArrowLeft: "←", ArrowRight: "→", ArrowUp: "↑", ArrowDown: "↓", Space: "Space", Backquote: "`",
+      Minus: "-", Equal: "=", BracketLeft: "[", BracketRight: "]", Backslash: "\\", Semicolon: ";", Quote: "'",
+      Comma: ",", Period: ".", Slash: "/", Escape: "Esc", Enter: "Return", Backspace: "Delete", Tab: "Tab" };
+    const key = names[s.code] ?? s.code.replace(/^Key|^Digit|^Numpad/, "");
+    if (mac) return (s.ctrl ? "⌃" : "") + (s.alt ? "⌥" : "") + (s.shift ? "⇧" : "") + (s.meta ? "⌘" : "") + key;
+    return [s.ctrl && "Ctrl", s.alt && "Alt", s.shift && "Shift", s.meta && "Meta", key].filter(Boolean).join("+");
+  }
 
   const reasons = {
     protected: "it plays protected (DRM) media",
@@ -218,6 +249,12 @@ globalThis.NerdfaderPanel = (() => {
     }, 500);
 
     const current = () => (state.override.on ? state.override.percent : state.tab);
+    let recording = false;
+    function saveSettings(change) {
+      state.settings = { ...state.settings, ...change };
+      render();
+      send("setSettings", change);
+    }
 
     function setPercent(p) {
       p = Math.round(Math.min(MAX, Math.max(0, p)));
@@ -248,7 +285,7 @@ globalThis.NerdfaderPanel = (() => {
       let note = "";
       if (supported && boosting && capture === "on") note = "capture mode: boosting";
       else if (supported && boosting && capture === "idle") note = "capture mode: waiting for sound";
-      else if (supported && boosting && capture === "paused") note = "capture mode: open me on this tab to resume";
+      else if (supported && boosting && capture === "paused") note = "capture mode: click the Nerdfader icon to resume";
       else if (all) note = supported ? `this tab keeps ${state.tab}%` : "";
       else if (supported) note = p === DEFAULT ? "this tab, default" : boosting && !state.status ? "this tab, boosted" : "this tab only";
       $("note").textContent = note;
@@ -268,6 +305,21 @@ globalThis.NerdfaderPanel = (() => {
       $("captureHint").textContent = state.captureAlways
         ? "used on sites that block boosting"
         : "asks first on sites that block boosting";
+
+      const settings = state.settings ?? { shortcut: null, altScroll: true };
+      $("shortcutBtn").textContent = recording ? "press keys…" : shortcutLabel(settings.shortcut);
+      $("shortcutBtn").classList.toggle("recording", recording);
+      $("shortcutHint").innerHTML = "";
+      $("shortcutHint").append(
+        recording ? "Esc cancels, Delete removes it" : "opens this on any page",
+        ...(state.browserShortcut !== undefined
+          ? [` · browser: ${state.browserShortcut || "none"} `, Object.assign(document.createElement("a"), { textContent: "change", className: "changeBrowser" })]
+          : []),
+      );
+      $("altScrollToggle").checked = settings.altScroll;
+      $("altScrollHint").textContent = settings.altScroll
+        ? `${mac ? "⌥" : "Alt"} + scroll on any page changes the volume and shows this for a moment`
+        : `${mac ? "⌥" : "Alt"} + scroll does nothing special`;
     }
 
     $("slider").addEventListener("input", (e) => setPercent(toPercent(Number(e.target.value))));
@@ -295,9 +347,38 @@ globalThis.NerdfaderPanel = (() => {
       $("slider").focus();
     });
 
+    $("shortcutBtn").addEventListener("click", () => { recording = !recording; render(); });
+    $("shortcutHint").addEventListener("click", (e) => {
+      if (e.target.classList.contains("changeBrowser")) call("openShortcuts");
+    });
+    $("altScrollToggle").addEventListener("change", (e) => {
+      saveSettings({ altScroll: e.target.checked });
+      $("slider").focus();
+    });
+
+    // While recording, the next key press with a non-modifier key becomes the shortcut.
+    function record(e) {
+      e.preventDefault();
+      e.stopPropagation();
+      if (["Shift", "Control", "Alt", "Meta"].includes(e.key)) return;
+      const plain = !e.altKey && !e.ctrlKey && !e.metaKey && !e.shiftKey;
+      recording = false;
+      if (e.key === "Escape" && plain) return render();
+      if ((e.key === "Backspace" || e.key === "Delete") && plain) return saveSettings({ shortcut: null });
+      saveSettings({ shortcut: { code: e.code, alt: e.altKey, ctrl: e.ctrlKey, meta: e.metaKey, shift: e.shiftKey } });
+      $("slider").focus();
+    }
+
     const editable = () => state.override.on || supported;
     root.addEventListener("keydown", (e) => {
+      if (recording) return record(e);
       if (e.key === "Escape" && close) { e.preventDefault(); close(); return; }
+      const s = state.settings?.shortcut;
+      if (close && s && e.code === s.code && e.altKey === s.alt && e.ctrlKey === s.ctrl && e.metaKey === s.meta && e.shiftKey === s.shift) {
+        e.preventDefault();   // the shortcut that opened the dialog closes it too
+        close();
+        return;
+      }
       if (!editable() || e.metaKey || e.ctrlKey || e.altKey) return;
       const step = e.shiftKey ? 1 : 5;   // in slider positions: 5% below 100%, 25% above
       let p = null;
@@ -311,15 +392,30 @@ globalThis.NerdfaderPanel = (() => {
       e.preventDefault();
       setPercent(p);
     });
-    root.addEventListener("wheel", (e) => {
-      if (!editable() || !e.deltaY) return;
+    // Scrolling: one step (as an arrow key) per 100 px, and at least one per scroll after a 200 ms pause, so a mouse
+    // notch of any size counts and a trackpad swipe doesn't fly past (the same rule as Option + scroll on pages).
+    let carried = 0, lastStep = -Infinity;
+    function wheel(e) {
+      if (!editable()) return;
+      const raw = Math.abs(e.deltaY) >= Math.abs(e.deltaX) ? e.deltaY : e.deltaX;
+      const delta = e.deltaMode === 1 ? raw * 40 : raw;
+      if (!delta) return;
       e.preventDefault();
-      setPercent(toPercent(Math.min(200, Math.max(0, toPos(current()) + (e.deltaY < 0 ? 5 : -5)))));
-    }, { passive: false });
+      if (Math.sign(delta) !== Math.sign(carried)) carried = 0;
+      carried += delta;
+      let steps = Math.trunc(carried / 100);
+      if (steps) carried -= steps * 100;
+      else if (e.timeStamp - lastStep > 200) { steps = Math.sign(delta); carried = 0; }
+      if (!steps) return;
+      lastStep = e.timeStamp;
+      setPercent(toPercent(Math.min(200, Math.max(0, toPos(current()) - 5 * steps))));
+    }
+    // In the in-page dialog the backdrop passes every scroll on (see ui/overlay.js); the popup listens itself.
+    if (!close) root.addEventListener("wheel", wheel, { passive: false });
 
     render();
     $("slider").focus();
-    return { destroy: () => clearInterval(poll) };
+    return { destroy: () => clearInterval(poll), wheel };
   }
 
   return { css, mount };

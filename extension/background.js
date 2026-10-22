@@ -20,6 +20,22 @@ const STOP_AFTER = 1500;   // ms to keep capturing after the page stops playing,
 // (+15.6 dB).
 const gainOf = (percent) => (percent <= 100 ? (percent / 100) ** 3 : percent / 100);
 const clamp = (p) => Math.round(Math.min(MAX, Math.max(0, Number(p) || 0)));
+// The slider's first half is 0 to 100% in steps of 1, its second half 100 to 600% in steps of 5 (as in ui/panel.js).
+const toPercent = (pos) => (pos <= 100 ? pos : 100 + (pos - 100) * 5);
+const toPos = (p) => (p <= 100 ? p : 100 + (p - 100) / 5);
+
+// The in-page shortcut (content/input.js), stored as the key's code and modifiers. Option/Alt + Shift + V by default,
+// the same as the browser-level shortcut in manifest.json.
+const DEFAULT_SHORTCUT = { code: "KeyV", alt: true, shift: true, ctrl: false, meta: false };
+async function settings() {
+  const { shortcut = DEFAULT_SHORTCUT, altScroll = true } = await chrome.storage.local.get(["shortcut", "altScroll"]);
+  return { shortcut, altScroll };
+}
+// The browser-level shortcut as Chrome shows it (for example "⌥⇧V"), or "" when the user removed it.
+async function browserShortcut() {
+  const commands = await chrome.commands.getAll();
+  return commands.find((c) => c.name === "_execute_action")?.shortcut ?? "";
+}
 
 const key = {
   tab: (id) => `tab:${id}`,           // the tab's own percent
@@ -135,6 +151,8 @@ async function reconcileAll() {
 async function state(tabId) {
   const info = await tabInfo(tabId);
   return {
+    settings: await settings(),
+    browserShortcut: await browserShortcut(),
     tab: info.own,
     override: info.override,
     status: info.status,
@@ -197,6 +215,39 @@ const handlers = {
     if (typeof msg.always === "boolean") reconcileAll();
     return state(msg.tabId);
   },
+  // From a page (content/input.js): the shortcut was pressed, or Option/Alt + scroll moved the volume by some steps.
+  async toggle(_msg, sender) {
+    await openPanel(sender.tab, { source: "shortcut" });
+  },
+  // Quick scrolling sends several at once; each starts from where the previous one left the volume.
+  nudge(msg, sender) {
+    const tabId = sender.tab.id;
+    const next = (nudges.get(tabId) ?? Promise.resolve()).then(async () => {
+      const info = await tabInfo(tabId);
+      const percent = clamp(toPercent(Math.min(200, Math.max(0, toPos(info.percent) + 5 * Math.trunc(msg.steps)))));
+      if (info.override.on) await handlers.setOverride({ tabId, percent });
+      else await handlers.setTab({ tabId, percent });
+      openPanel(sender.tab, { moment: true });
+      return { percent };
+    });
+    nudges.set(tabId, next.catch(() => {}));
+    return next;
+  },
+  getSettings: () => settings(),
+  // From the panel: the in-page shortcut (null for none) and whether Option/Alt + scroll changes the volume.
+  async setSettings(msg) {
+    const change = {};
+    if (msg.shortcut !== undefined) change.shortcut = msg.shortcut;
+    if (typeof msg.altScroll === "boolean") change.altScroll = msg.altScroll;
+    await chrome.storage.local.set(change);
+    const next = await settings();
+    for (const tab of await chrome.tabs.query({})) chrome.tabs.sendMessage(tab.id, { type: "settings", settings: next }).catch(() => {});
+    return state(msg.tabId);
+  },
+  // From the panel: open the browser's shortcuts page (chrome:// links can't be opened from a page).
+  async openShortcuts() {
+    await chrome.tabs.create({ url: "chrome://extensions/shortcuts" });
+  },
   // From the offscreen page.
   async captureIdle(msg) {
     const capture = await get("session", key.capture(msg.tabId), null);
@@ -216,7 +267,7 @@ chrome.runtime.onMessage.addListener((msg, sender, reply) => {
   if (msg?.target === "offscreen") return false;
   const handler = handlers[msg?.type];
   if (!handler) return false;
-  if (["hello", "status"].includes(msg.type) && !sender.tab) return false;
+  if (["hello", "status", "toggle", "nudge"].includes(msg.type) && !sender.tab) return false;
   if (msg.tabId === undefined && sender.tab) msg.tabId = sender.tab.id;   // the in-page dialog doesn't know its tab id
   handler(msg, sender).then(reply, (err) => reply({ error: String(err) }));
   return true;   // reply arrives asynchronously
@@ -225,16 +276,42 @@ chrome.runtime.onMessage.addListener((msg, sender, reply) => {
 // Clicking the toolbar icon opens (or closes) the dialog in the page. Pages extensions can't reach get the toolbar
 // popup instead: it is set for that tab and opened, or opens on the next click where opening it directly isn't
 // supported.
-async function openPanel(tab) {
-  reconcile(tab.id, { opened: true });   // clicking the icon is what allows capture mode on this tab
+const nudges = new Map();   // tabId -> the last volume nudge, so the next one waits for it
+// One key press of the default shortcut reaches both the browser shortcut (as an icon click) and the page's own
+// shortcut, some time apart. Each one pairs with an unpaired press from the other source within 600 ms and is then
+// ignored, so the dialog doesn't open and close at once; a second press of the same kind still closes it.
+const presses = new Map();   // tabId -> { action: { at, paired }, shortcut: { at, paired } }
+function duplicate(tabId, source) {
+  const now = Date.now();
+  const seen = presses.get(tabId) ?? {};
+  const other = seen[source === "action" ? "shortcut" : "action"];
+  presses.set(tabId, seen);
+  if (other && !other.paired && now - other.at < 600) {
+    other.paired = true;
+    seen[source] = { at: now, paired: true };
+    return true;
+  }
+  seen[source] = { at: now, paired: false };
+  return false;
+}
+// { moment: true } shows it for a moment (Option/Alt + scroll), or keeps it up if it is already showing.
+// { source: "shortcut" } is the page's own shortcut; anything else came through the icon or the browser shortcut.
+async function openPanel(tab, { moment = false, source = "action" } = {}) {
+  if (!moment) {
+    if (duplicate(tab.id, source)) return;
+    reconcile(tab.id, { opened: true });   // clicking the icon is what allows capture mode on this tab
+  }
+  const target = { tabId: tab.id };
   try {
-    await chrome.scripting.executeScript({ target: { tabId: tab.id }, files: ["ui/panel.js", "ui/overlay.js"] });
+    await chrome.scripting.executeScript({ target, func: (moment) => { globalThis.__nerdfaderOpen = { moment }; }, args: [moment] });
+    await chrome.scripting.executeScript({ target, files: ["ui/panel.js", "ui/overlay.js"] });
   } catch {
+    if (moment) return;
     await chrome.action.setPopup({ tabId: tab.id, popup: "popup/popup.html" });
     await chrome.action.openPopup?.({ windowId: tab.windowId }).catch(() => {});
   }
 }
-chrome.action.onClicked.addListener(openPanel);
+chrome.action.onClicked.addListener((tab) => openPanel(tab));
 
 // A tab that went quiet in capture mode starts capturing again when it plays.
 chrome.tabs.onUpdated.addListener(async (tabId, change) => {
@@ -246,6 +323,7 @@ chrome.tabs.onUpdated.addListener(async (tabId, change) => {
 });
 
 chrome.tabs.onRemoved.addListener(async (tabId) => {
+  presses.delete(tabId);
   clearTimeout(stopTimers.get(tabId));
   stopTimers.delete(tabId);
   await stopCapture(tabId).catch(() => {});
@@ -271,7 +349,7 @@ chrome.runtime.onInstalled.addListener(async () => {
     const target = { tabId: tab.id, allFrames: true };
     chrome.scripting
       .executeScript({ target, files: ["content/main.js"], world: "MAIN", injectImmediately: true })
-      .then(() => chrome.scripting.executeScript({ target, files: ["content/bridge.js"] }))
+      .then(() => chrome.scripting.executeScript({ target, files: ["content/bridge.js", "content/input.js"] }))
       .catch(() => {});   // pages the browser protects (the Web Store, other extensions)
   }
   reconcileAll();

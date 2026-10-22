@@ -1,11 +1,13 @@
 // Tests in real Google Chrome, the way a person uses Nerdfader: installed as an unpacked extension, updated and
-// reloaded over open tabs, opened by clicking its toolbar icon, and tried on real sites. Run with `npm run test:real`.
+// reloaded over open tabs, opened by clicking its toolbar icon, and tried on real sites. `npm run test:real` runs it
+// headless (no window); `npm run test:real:window` shows the window, which is also the only way browser-level
+// shortcuts fire (they come from the browser's own UI, which headless Chrome doesn't have).
 //
 // Chrome is started with a throwaway profile and driven over its debugging protocol, which can load extensions and
 // click their toolbar icon for real (Extensions.loadUnpacked, Extensions.triggerAction), so capture mode runs under
 // the browser's actual "only after the user clicked the extension on this tab" rule. Errors are read from the same
 // list chrome://extensions shows. Chrome's audio output is switched off, so nothing is audible (pages still play
-// and can be captured). A Chrome window opens while this runs; it is closed at the end.
+// and can be captured). Chrome is quit properly at the end.
 import { test as nodeTest, before, after } from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
@@ -91,7 +93,10 @@ before(async () => {
   profile = fs.mkdtempSync(path.join(os.tmpdir(), "nerdfader-chrome-"));
   extDir = path.join(profile, "Nerdfader");   // one folder, updated in place, like the install command does
   const port = 9300 + Math.floor(Math.random() * 600);
+  // HEADLESS=1 runs Chrome without a window (same browser, no UI).
+  const headless = process.env.HEADLESS ? ["--headless=new"] : [];
   chrome = spawn(CHROME, [
+    ...headless,
     `--user-data-dir=${profile}/profile`, `--remote-debugging-port=${port}`, "--enable-unsafe-extension-debugging",
     "--no-first-run", "--no-default-browser-check", "--autoplay-policy=no-user-gesture-required",
     // Otherwise Bluetooth headphones' media buttons (or macOS on their behalf) can pause the test players.
@@ -99,7 +104,9 @@ before(async () => {
     // No sound reaches the speakers; pages still play, count as playing sound, and can be captured.
     "--disable-audio-output",
     "--window-position=40,40", "--window-size=1000,700",
-    "-ApplePersistenceIgnoreState", "YES",   // no macOS "reopen windows?" prompt for this throwaway Chrome
+    // No macOS "reopen windows?" prompt for this throwaway Chrome (headless has no windows, and would read "YES" as
+    // a second page to open).
+    ...(headless.length ? [] : ["-ApplePersistenceIgnoreState", "YES"]),
     "about:blank",
   ], { stdio: "ignore" });
   for (let i = 0; i < 100 && !browser; i++) {
@@ -268,6 +275,7 @@ test("the toolbar icon opens the dialog quickly, keys stay in it, and it closes 
   assert.equal(await until(async () => (await dialog(p.page)) === "closed", 1000), true, "outside click closes");
   await clickIcon(p.page);
   await until(async () => (await dialog(p.page)) === "ready");
+  await wait(200);   // a person's second click
   await clickIcon(p.page);
   assert.equal(await until(async () => (await dialog(p.page)) === "closed", 1000), true, "second click closes");
 
@@ -275,6 +283,27 @@ test("the toolbar icon opens the dialog quickly, keys stay in it, and it closes 
   await wait(1500);
   assert.equal((await state(p.tabId)).tab, 55);
   near((await realVolume(p.tabId))[0], gain(55));
+  await call({ type: "setTab", tabId: p.tabId, percent: 100 });
+  assert.deepEqual(await errors(), []);
+  await p.page.close();
+});
+
+test("shortcuts: the browser shortcut is registered, the page shortcut toggles the dialog, Option + scroll shows it for a moment", async () => {
+  assert.equal((await call({ type: "state", tabId: 0 })).browserShortcut, "⌥⇧V", "browser-level shortcut");
+  const p = await open(`${origin}/player?src=/tone.wav`);
+  await p.page.keyboard.press("Alt+Shift+KeyV");
+  assert.equal(await until(async () => (await dialog(p.page)) === "ready", 3000), true, "page shortcut opens");
+  await p.page.keyboard.press("Alt+Shift+KeyV");
+  assert.equal(await until(async () => (await dialog(p.page)) === "closed", 1000), true, "and closes");
+
+  await p.page.mouse.move(300, 300);
+  await p.page.keyboard.down("Alt");
+  await p.page.mouse.wheel(0, -100);
+  await p.page.keyboard.up("Alt");
+  assert.equal(await until(async () => (await state(p.tabId)).tab === 125, 2000), true, "Option + scroll: one step");
+  assert.equal(await until(async () => (await dialog(p.page)) === "ready", 2000), true, "dialog shows");
+  assert.equal(await until(async () => (await dialog(p.page)) === "closed", 3500), true, "and hides by itself");
+  near((await realVolume(p.tabId))[0], 1, "the element plays at full volume; the rest of the boost is in Web Audio");
   await call({ type: "setTab", tabId: p.tabId, percent: 100 });
   assert.deepEqual(await errors(), []);
   await p.page.close();

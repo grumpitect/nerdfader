@@ -1,10 +1,16 @@
-// The in-page dialog. Injected into the tab's top frame (after ui/panel.js) each time Nerdfader's toolbar icon is
-// clicked: opens the panel centered over a blurred backdrop, or closes it if it is already open. Clicking the
+// The in-page dialog. Injected into the tab's top frame (after ui/panel.js) each time Nerdfader's toolbar icon or
+// shortcut is used: opens the panel centered over a blurred backdrop, or closes it if it is already open. Clicking the
 // backdrop or pressing Esc closes it too. It lives in a closed shadow root, so the page's styles can't reach it.
+//
+// Option/Alt + scroll opens it "for a moment" instead (the background sets globalThis.__nerdfaderOpen first): it goes
+// away 2 seconds after the last scroll, unless the user clicks or types in it, which keeps it until they click away
+// or press Esc. While it is up, scrolling anywhere over it changes the volume.
 (() => {
   const TAG = "nerdfader-dialog";
+  const request = globalThis.__nerdfaderOpen ?? {};
+  delete globalThis.__nerdfaderOpen;
   const open = document.querySelector(TAG);
-  if (open) { open.dispatchEvent(new Event("nerdfader-close")); return; }
+  if (open) { open.dispatchEvent(new Event(request.moment ? "nerdfader-poke" : "nerdfader-close")); return; }
 
   const css = `
 .backdrop {
@@ -80,6 +86,23 @@
   addEventListener("pagehide", close);
   backdrop.addEventListener("pointerdown", (e) => { if (e.target === backdrop) close(); });
 
+  // Shown for a moment: hide 2 s after the last scroll, unless the user starts using it.
+  let staying = !request.moment, hideTimer = 0;
+  const poke = () => {
+    if (staying || closed) return;
+    clearTimeout(hideTimer);
+    hideTimer = setTimeout(close, 2000);
+  };
+  const stay = () => { staying = true; clearTimeout(hideTimer); };
+  host.addEventListener("nerdfader-poke", poke);
+  dialog.addEventListener("pointerdown", stay);
+  dialog.addEventListener("keydown", (e) => { if (e.key !== "Escape") stay(); });
+  backdrop.addEventListener("wheel", (e) => {
+    e.preventDefault();
+    panel?.wheel(e);
+    poke();
+  }, { passive: false });
+
   // Shown once the panel has its values, so it never appears half-filled.
   NerdfaderPanel.mount(dialog, { url: location.href, close }).then((p) => {
     panel = p;
@@ -87,5 +110,6 @@
     wrap.hidden = false;
     host.dataset.ready = "";   // for tests and for anyone checking from the page: the dialog is showing its values
     dialog.querySelector(".slider").focus();
+    poke();
   });
 })();

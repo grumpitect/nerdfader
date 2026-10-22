@@ -470,10 +470,11 @@ test("closing a captured tab ends its capture", async () => {
 
 // The dialog lives in a closed shadow root, so these tests drive it the way a person does: keys and clicks.
 const dialogOpen = (page) => page.evaluate(() => !!document.querySelector("nerdfader-dialog"));
+// Open and showing its values, so it reacts to keys.
+const dialogReady = (page) => page.evaluate(() => document.querySelector("nerdfader-dialog")?.dataset.ready !== undefined);
 const openDialog = async (page, tabId) => {
   await sw.evaluate(async (tabId) => openPanel(await chrome.tabs.get(tabId)), tabId);
-  await until(() => dialogOpen(page), 2000);
-  await wait(300);   // the panel loads its state
+  await until(() => dialogReady(page), 2000);
 };
 
 test("the toolbar icon opens a dialog in the page that changes the tab, and closes on Esc, outside clicks or a second click", async () => {
@@ -495,6 +496,7 @@ test("the toolbar icon opens a dialog in the page that changes the tab, and clos
   assert.equal(await until(async () => !(await dialogOpen(page)), 1000), true, "a click outside closes");
 
   await openDialog(page, tabId);
+  await wait(200);   // a person's second click
   await sw.evaluate(async (tabId) => openPanel(await chrome.tabs.get(tabId)), tabId);
   assert.equal(await until(async () => !(await dialogOpen(page)), 1000), true, "clicking the icon again closes");
 
@@ -604,3 +606,117 @@ test("boosting loud audio makes it clearly louder without crackling", async () =
   await send({ type: "setTab", tabId, percent: 100 });
   await page.close();
 });
+
+test("the shortcut (Option/Alt+Shift+V by default) opens and closes the dialog on the page; a new one can be recorded", async () => {
+  const { page, tabId } = await openTestPage();
+  await page.keyboard.press("Alt+Shift+KeyV");
+  assert.equal(await until(() => dialogReady(page), 2000), true, "default shortcut opens");
+  await page.keyboard.press("Alt+Shift+KeyV");
+  assert.equal(await until(async () => !(await dialogOpen(page)), 1000), true, "and closes");
+
+  // Record Ctrl+Shift+K in the panel (the toolbar popup shows the same panel without a shadow root).
+  const popup = await context.newPage();
+  await popup.addInitScript(([tabId, url]) => { chrome.tabs.query = async () => [{ id: tabId, url }]; }, [tabId, page.url()]);
+  await popup.goto(ext.url());
+  await popup.locator(".shortcutBtn", { hasText: "⌥⇧V" }).waitFor();
+  await popup.click(".shortcutBtn");
+  await popup.locator(".shortcutBtn", { hasText: "press keys" }).waitFor();
+  await popup.keyboard.press("Control+Shift+KeyK");
+  await popup.locator(".shortcutBtn", { hasText: "⌃⇧K" }).waitFor();
+  await popup.close();
+  await settle();
+
+  await page.bringToFront();
+  await page.keyboard.press("Alt+Shift+KeyV");
+  await wait(400);
+  assert.equal(await dialogOpen(page), false, "the old shortcut no longer opens it");
+  await page.keyboard.press("Control+Shift+KeyK");
+  assert.equal(await until(() => dialogReady(page), 2000), true, "the recorded shortcut opens it");
+  await page.keyboard.press("Escape");
+  assert.equal(await until(async () => !(await dialogOpen(page)), 1000), true, "Esc closes it");
+
+  // A shortcut without Ctrl/Alt/Cmd doesn't fire while typing in a text field.
+  await send({ type: "setSettings", shortcut: { code: "KeyQ", alt: false, ctrl: false, meta: false, shift: false } });
+  await settle();
+  await page.evaluate(() => { const i = document.createElement("input"); i.id = "field"; document.body.append(i); i.focus(); });
+  await page.keyboard.press("KeyQ");
+  await wait(400);
+  const where = await page.evaluate(() => document.activeElement?.tagName);
+  assert.equal(await dialogOpen(page), false, `not while typing (focus was on ${where})`);
+  assert.equal(await page.inputValue("#field"), "q");
+  await page.evaluate(() => document.activeElement.blur());
+  await page.keyboard.press("KeyQ");
+  assert.equal(await until(() => dialogReady(page), 2000), true, "fires outside text fields");
+  await page.keyboard.press("Escape");
+  await until(async () => !(await dialogOpen(page)), 1000);
+
+  await send({ type: "setSettings", shortcut: { code: "KeyV", alt: true, ctrl: false, meta: false, shift: true } });
+  await page.close();
+});
+
+test("Option/Alt + scroll changes the volume and shows the dialog for a moment; using it keeps it up", async () => {
+  const { page, tabId } = await openTestPage();
+  await page.mouse.move(200, 200);
+  const state = async () => (await send({ type: "state", tabId })).tab;
+  const altWheel = async (...deltas) => {
+    await page.keyboard.down("Alt");
+    for (const d of deltas) await page.mouse.wheel(0, d);
+    await page.keyboard.up("Alt");
+  };
+  const closesWithin = (ms) => until(async () => !(await dialogOpen(page)), ms);
+
+  // A plain scroll still scrolls the page.
+  await page.evaluate(() => { document.body.style.height = "5000px"; });
+  await page.mouse.wheel(0, 300);
+  assert.equal(await until(() => page.evaluate(() => scrollY > 0), 2000), true, "page scrolls");
+  assert.equal(await dialogOpen(page), false);
+
+  // One notch up: one step, and the dialog shows up; left alone, it goes away after about 2 s.
+  await altWheel(-100);
+  assert.equal(await until(async () => (await state()) === 125, 2000), true, "a notch is one step");
+  assert.equal(await until(() => dialogReady(page), 2000), true, "the dialog shows");
+  const shownAt = Date.now();
+  assert.equal(await closesWithin(3500), true, "it goes away by itself");
+  assert.ok(Date.now() - shownAt > 1500, "not too soon");
+
+  // A tiny notch counts too. Scrolling over the dialog (no Option needed) keeps changing the volume and keeps it up.
+  await altWheel(-4);
+  assert.equal(await until(async () => (await state()) === 150, 2000), true, "a small notch is one step too");
+  await until(() => dialogReady(page), 2000);
+  for (let i = 0; i < 4; i++) {
+    await wait(700);
+    await page.mouse.wheel(0, 100);   // one notch down each: 150 -> 125 -> 100 -> 95 -> 90
+  }
+  assert.equal(await dialogOpen(page), true, "kept up while scrolling");
+  assert.equal(await until(async () => (await state()) === 90, 1000), true, "each notch over the dialog is a step");
+  near((await real(tabId)).a, 0.8 * gain(90));
+  assert.equal(await closesWithin(3500), true, "and goes away after the scrolling stops");
+
+  // Using it (a key, a click) keeps it up until Esc or a click outside.
+  await altWheel(100);
+  await until(() => dialogReady(page), 2000);
+  await page.keyboard.press("ArrowRight");
+  await wait(3000);
+  assert.equal(await dialogOpen(page), true, "stays once used");
+  await page.keyboard.press("Escape");
+  assert.equal(await closesWithin(1000), true, "Esc closes it");
+
+  // A click on the backdrop hides it straight away.
+  await altWheel(-100);
+  await until(() => dialogReady(page), 2000);
+  await page.mouse.click(5, 5);
+  assert.equal(await closesWithin(500), true, "a click outside hides it at once");
+
+  // Turned off: Option + scroll does nothing special.
+  const before = await state();
+  await send({ type: "setSettings", altScroll: false });
+  await settle();
+  await altWheel(-100);
+  await wait(500);
+  assert.equal(await state(), before, "no change");
+  assert.equal(await dialogOpen(page), false, "no dialog");
+  await send({ type: "setSettings", altScroll: true });
+  await send({ type: "setTab", tabId, percent: 100 });
+  await page.close();
+});
+

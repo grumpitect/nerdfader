@@ -30,8 +30,17 @@ Made for the [Nerdative](https://www.youtube.com/@nerdative) channel on YouTube,
 - **all_tabs.** Turn it on and one slider sets every tab, including ones you open later. Turn it off and every
   tab goes back to the volume it had before.
 - **Badge.** The toolbar icon shows the tab's volume when it isn't 100%.
-- **Keyboard and mouse wheel.** ←/→ change by 5% (25% above 100%; hold Shift for finer steps), **0** to **9**
-  jump to 0 to 90%, **r** resets, **Esc** closes, and scrolling over the dialog works too.
+- **Shortcut.** **⌥⇧V** (Alt+Shift+V elsewhere) opens and closes the dialog. Record your own in the dialog (click
+  the shortcut, press the keys; Delete removes it): it works on any page and inside embedded players. The browser's
+  own shortcut also works from the address bar; change it at `arc://extensions/shortcuts` (the dialog links there).
+- **⌥ + scroll.** Hold Option (Alt) and scroll anywhere, with a mouse wheel or two fingers on a trackpad, to change
+  the tab's volume. The dialog shows for a moment and goes away 2 seconds after you stop; click or type in it and it
+  stays until you click away or press Esc. Turn it off with **option_scroll** in the dialog.
+- **Keyboard and mouse wheel in the dialog.** ←/→ change by 5% (25% above 100%; hold Shift for finer steps), **0**
+  to **9** jump to 0 to 90%, **r** resets, **Esc** closes, and scrolling over the dialog works too.
+- **Four-finger gestures?** macOS keeps three- and four-finger trackpad gestures to itself; web pages and extensions
+  never see them. To open Nerdfader with one, map the gesture to ⌥⇧V in a tool like
+  [BetterTouchTool](https://folivora.ai).
 - **The site doesn't notice.** YouTube's own volume slider keeps working and keeps showing its own value;
   Nerdfader scales whatever the site plays.
 - **Even-feeling slider.** Below 100% it uses the same curve as VLC and Nerdwave, so 50% sounds about half as
@@ -91,8 +100,8 @@ them, and the popup offers **capture mode**:
 Nerdfader can't reach pages the browser keeps extensions out of (`arc://` and `chrome://` pages, the Chrome Web
 Store). Sound from plugins or from other extensions isn't affected either.
 
-**Permissions.** Access to all sites, to run that script in whatever page you're on; storage, to remember volumes;
-tab capture and an offscreen page, for capture mode. Nerdfader sends nothing anywhere: there is no network code in it.
+**Permissions.** Access to all sites, to run that script in whatever page you're on; storage, to remember volumes and
+settings; tab capture and an offscreen page, for capture mode. Nerdfader sends nothing anywhere: there is no network code in it.
 
 Volumes live in the browser's extension storage. A tab's own volume lasts until the tab closes or the browser quits;
 the all_tabs and capture_mode switches are remembered across restarts.
@@ -111,21 +120,24 @@ The tests switch the browser's audio output off (pages still play and can be cap
 real output with tab capture, so they're silent.
 
 ```bash
-npm run test:real      # the same in your installed Google Chrome, the way a person uses it
+npm run test:real          # the same in your installed Google Chrome, the way a person uses it (no window)
+npm run test:real:window   # with a visible window, which browser-level shortcuts need
 ```
 
 `test:real` starts Google Chrome with a throwaway profile and drives it over its debugging protocol, which can load
 the extension and click its toolbar icon for real. It installs 1.0.0 and updates it over open tabs, reloads it while
-tabs play, opens the dialog, runs capture mode under Chrome's real "only after you clicked it on this tab" rule,
-plays a DRM (ClearKey) stream, and visits YouTube, Vimeo, Facebook and Twitch, failing on anything that shows up
-under Errors in chrome://extensions. A Chrome window is open while it runs. Set `CHROME` to use another
-Chromium-based browser's binary.
+tabs play, opens the dialog, uses the shortcuts and Option + scroll, runs capture mode under Chrome's real "only after
+you clicked it on this tab" rule, plays a DRM (ClearKey) stream, and visits YouTube, Vimeo, Facebook and Twitch,
+failing on anything that shows up under Errors in chrome://extensions. Its audio output is off, so it's silent. Run
+the window version before releases: only it presses the browser-level shortcut (headless Chrome has no browser UI).
+Set `CHROME` to use another Chromium-based browser's binary.
 
 To try a change, load the `extension` folder with **Load unpacked** and click the reload arrow after editing.
 
 - `extension/content/main.js`: runs in the page's world; patches media volume and Web Audio, boosts, and reports
   what it can't boost.
 - `extension/content/bridge.js`: runs in the extension's world; passes the level from the background to the page.
+- `extension/content/input.js`: the in-page shortcut and Option + scroll.
 - `extension/background.js`: remembers each tab's volume and the switches, pushes levels to tabs, and decides when
   capture mode runs.
 - `extension/offscreen/`: capture mode's playback, limiter and silence detection.
