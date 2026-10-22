@@ -202,7 +202,28 @@ globalThis.NerdfaderPanel = (() => {
     const supported = /^(https?|file):/.test(url ?? "");
     const host = supported ? new URL(url).hostname.replace(/^www\./, "") || "this file" : "";
     const $ = (cls) => root.querySelector("." + cls);
-    const call = (type, extra = {}) => chrome.runtime.sendMessage({ type, tabId, ...extra });
+    // After the extension reloads (an update), a panel that is still open is cut off from it, and calling into it
+    // throws. Every call checks first; a cut-off dialog closes itself, a cut-off popup says to reopen it.
+    let poll = 0, cutOff = false;
+    const connected = () => { try { return !!chrome.runtime?.id; } catch { return false; } };
+    function disconnected() {
+      if (cutOff) return;
+      cutOff = true;
+      clearInterval(poll);
+      if (close) return close();
+      $("target").textContent = "Nerdfader was just updated";
+      $("note").textContent = "close this and open it again";
+      for (const el of root.querySelectorAll(".vol, .row button, .offer, .rule, .toggle, .hint, .setting")) el.hidden = true;
+    }
+    const call = (type, extra = {}) => {
+      if (!connected()) { disconnected(); return Promise.resolve(null); }
+      try {
+        return chrome.runtime.sendMessage({ type, tabId, ...extra }).catch(() => (connected() ? null : (disconnected(), null)));
+      } catch {
+        disconnected();
+        return Promise.resolve(null);
+      }
+    };
 
     root.classList.add("nf");
     root.innerHTML = html;
@@ -213,10 +234,10 @@ globalThis.NerdfaderPanel = (() => {
     // also what lets the browser capture this tab, so a paused capture mode starts again (the dialog's icon click
     // already did that in the background).
     const valid = (reply) => reply && !reply.error && reply.override;
-    let state = await call("state").catch(() => null);
+    let state = await call("state");
     if (!valid(state)) {   // the background may be restarting, for example right after an update
       await new Promise((r) => setTimeout(r, 300));
-      state = await call("state").catch(() => null);
+      state = await call("state");
     }
     if (!valid(state)) {
       $("target").textContent = "Nerdfader was just updated";
@@ -242,9 +263,9 @@ globalThis.NerdfaderPanel = (() => {
     }
 
     // Pages report what they can boost, and capture mode starts and stops, while the panel is open.
-    const poll = setInterval(async () => {
+    poll = setInterval(async () => {
       if (busy || Date.now() - changedAt < 800) return;
-      const reply = await call("state").catch(() => null);
+      const reply = await call("state");
       if (valid(reply) && !busy && Date.now() - changedAt >= 800) { state = reply; render(); }
     }, 500);
 

@@ -235,6 +235,7 @@ test("updating from 1.0 over open tabs: no errors, and those tabs work with the 
 });
 
 test("reloading the extension while tabs play: no errors, tabs keep working", async () => {
+  await install("working tree");
   const player = await open(`${origin}/player?src=${other}/tone.wav`);
   for (let i = 0; i < 3; i++) {
     await install("working tree");
@@ -243,6 +244,15 @@ test("reloading the extension while tabs play: no errors, tabs keep working", as
     await wait(300);
     near((await realVolume(player.tabId))[0], gain(40 + i * 10), `after reload ${i + 1}`);
   }
+  // With the dialog open when the extension reloads: it closes itself, and nothing throws.
+  await clickIcon(player.page);
+  assert.equal(await until(async () => (await dialog(player.page)) === "ready", 3000), true);
+  await install("working tree");
+  assert.equal(await until(async () => (await dialog(player.page)) === "closed", 3000), true, "the cut-off dialog closes");
+  await wait(1500);   // a few of its refreshes would have run by now
+  await clickIcon(player.page);
+  assert.equal(await until(async () => (await dialog(player.page)) === "ready", 3000), true, "and opens again with the new version");
+  await player.page.keyboard.press("Escape");
   assert.deepEqual(await errors(), []);
   await player.page.close();
 });
