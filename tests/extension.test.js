@@ -93,6 +93,8 @@ before(async () => {
       "--disable-features=MediaSessionService",
       // No sound reaches the speakers; pages still play, count as playing sound, and can be captured.
       "--disable-audio-output",
+      // For the README screenshot: a reserved documentation domain instead of the test server's address.
+      "--host-resolver-rules=MAP video.example 127.0.0.1",
     ],
   });
   sw = context.serviceWorkers()[0] ?? (await context.waitForEvent("serviceworker"));
@@ -507,8 +509,9 @@ test("the toolbar icon opens a dialog in the page that changes the tab, and clos
   if (process.env.SCREENSHOT) {
     const demo = await context.newPage();
     await demo.setViewportSize({ width: 880, height: 560 });
-    await demo.goto(origin + "/demo");
-    const demoId = await tabIdOf(origin);
+    const demoOrigin = origin.replace("127.0.0.1", "video.example");
+    await demo.goto(demoOrigin + "/demo");
+    const demoId = await tabIdOf(demoOrigin);
     await send({ type: "setTab", tabId: demoId, percent: 250 });
     await openDialog(demo, demoId);
     await demo.evaluate(() => document.activeElement?.blur());

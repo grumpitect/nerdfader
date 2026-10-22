@@ -5,9 +5,10 @@
 **A volume slider for every browser tab, from 0 to 600%.**
 
 Nerdfader is a small, free, open-source browser extension for Arc, Chrome and other Chromium browsers. Click its
-icon, and a small dialog opens in the middle of the page over a blurred backdrop. Drag the slider, and that tab
-gets quieter (or louder). Click anywhere outside it, press Esc, or click the icon again to close it. Most sites are boosted from inside the page, with no
-"this tab is being shared" highlight; capture mode is only used, with your OK, for the few sites that block that.
+icon (or press ⌘⇧0), and a small dialog opens in the middle of the page over a blurred backdrop. Drag the slider,
+and that tab gets quieter (or louder). Click anywhere outside it, press Esc, or click the icon again to close it.
+Most sites are boosted from inside the page, with no "this tab is being shared" highlight; capture mode is only
+used, with your OK, for the few sites that block that.
 
 Made for the [Nerdative](https://www.youtube.com/@nerdative) channel on YouTube, by the same person as
 [Nerdwave](https://github.com/grumpitect/nerdwave).
@@ -17,32 +18,34 @@ Made for the [Nerdative](https://www.youtube.com/@nerdative) channel on YouTube,
 ## Features
 
 - **One slider per tab.** 0 to 600%. Each tab remembers its volume across reloads and navigation, until you close it.
-- **Boost without distortion.** Above 100% a limiter holds loud parts down instead of letting them crackle.
-  600% is 6x (+15.6 dB), the same scale as other boosters.
-- **Capture mode, only when needed.** (The ⓘ next to capture_mode in the dialog explains it in a few lines.) Netflix, Spotify and other DRM sites (and media served from another site
+- **A boost you can hear, without crackle.** Above 100% a soft clipper rounds off the loudest peaks instead of
+  chopping them, so loud music and speech really get louder (about +12 dB at 600%, where a limiter gave +6).
+  600% is 6x (+15.6 dB) on quieter audio, the same scale as other boosters.
+- **Capture mode, only when needed.** Netflix, Spotify and other DRM sites (and media served from another site
   without permission to process it) can't be boosted from inside the page. For those, Nerdfader offers capture
   mode: once for that tab, or always. It runs only while the tab plays sound: it stops a moment after the tab
-  pauses or goes quiet, and starts again when it plays.
+  pauses or goes quiet, and starts again when it plays. The ⓘ next to capture_mode in the dialog explains it.
 - **Reset.** One click (or **r**) puts the tab back to 100%.
-- **Opens over the page.** The dialog sits in the page, centered over a blurred backdrop, and shows above
-  fullscreen video too. Keys you type in it don't reach the page, so a video player won't also seek. On pages
-  extensions can't touch (`arc://` and `chrome://` pages, the Web Store) the icon opens a regular popup instead.
+- **Opens over the page.** The dialog sits in the page, centered over a blurred backdrop, and shows above fullscreen
+  video too. Its name links here, its version to the release notes. Keys you type in it don't reach the page, so a
+  video player won't also seek. On pages extensions can't touch (`arc://` and `chrome://` pages, the Web Store) the
+  icon opens a regular popup instead.
 - **all_tabs.** Turn it on and one slider sets every tab, including ones you open later. Turn it off and every
   tab goes back to the volume it had before.
 - **Badge.** The toolbar icon shows the tab's volume when it isn't 100%.
 - **Shortcut.** **⌘⇧0** (Ctrl+Shift+9 on Windows and Linux, where Windows often keeps Ctrl+Shift+0 for switching
-  keyboard layouts) opens and closes the dialog. Record your own in the dialog (click
-  the shortcut, press the keys; Delete removes it): it works on any page and inside embedded players. The browser's
+  keyboard layouts) opens and closes the dialog. Record your own in the dialog (click the shortcut, press
+  the keys; Delete removes it): it works on any page and inside embedded players. The browser's
   own shortcut also works from the address bar; change it at `arc://extensions/shortcuts` (the dialog links there).
   If the browser already uses that key itself, it leaves the browser-level shortcut unassigned; pick another there.
-- **Modifier + scroll.** Hold Command (the Windows key elsewhere) and scroll anywhere, with a mouse wheel or two fingers on a trackpad, to
-  change the tab's volume: scrolling down turns it up (with macOS natural scrolling, that's a two-finger swipe up).
-  The dialog shows for a moment and follows along while you keep scrolling; it goes away 2 seconds after you stop.
-  Click or type in it and it stays until you click away or press Esc. Pick the key in **scroll_volume**: ⌘ Command
-  (the default), ⌥ Option, ⌃ Control or ⇧ Shift (or turn it off). On a Mac, Option works with a trackpad only (macOS doesn't
-  pass Option + mouse wheel to pages); with a mouse, pick another key. A trackpad pinch never counts as Control +
-  scroll. The page doesn't rubber-band while the dialog is up, so a hard swipe at the top or bottom of a page stays
-  with the dialog.
+- **Modifier + scroll.** Hold Command (the Windows key elsewhere) and scroll anywhere, with a mouse wheel or two
+  fingers on a trackpad, to change the tab's volume: scrolling down turns it up (with macOS natural scrolling, that's
+  a two-finger swipe up). The dialog shows for a moment and follows along while you keep scrolling; it goes away 2
+  seconds after you stop. Click or type in it and it stays until you click away or press Esc. Pick the key in
+  **scroll_volume**: ⌘ Command (the default), ⌥ Option, ⌃ Control or ⇧ Shift (or turn it off). On a Mac, Option works
+  with a trackpad only (macOS doesn't pass Option + mouse wheel to pages); with a mouse, pick another key. A trackpad
+  pinch never counts as Control + scroll. The page doesn't rubber-band while the dialog is up, so a hard swipe at the
+  top or bottom of a page stays with the dialog.
 - **Keyboard and mouse wheel in the dialog.** ←/→ change by 5% (25% above 100%; hold Shift for finer steps), **0**
   to **9** jump to 0 to 90%, **r** resets, **c** takes up the capture-mode offer, **Esc** closes, and scrolling over
   the dialog works too. The dialog keeps the keyboard itself, so no control inside it takes focus or shows a focus
@@ -90,14 +93,14 @@ each page (and each frame in it) that scales the page's own sound.
 
 - **`<audio>` and `<video>`:** the element plays at the site's volume times yours. The site still reads back the
   volume it set, so its own controls don't jump. Above 100%, the element's sound goes through a gain stage and a
-  limiter (Web Audio).
+  soft clipper (Web Audio).
 - **Web Audio** (games, some players): sound headed for the speakers passes through the same gain stage, which
   glides to the new level so dragging doesn't click.
 
 The browser won't let a page's script process three kinds of sound, so those can't be boosted from inside:
 protected (DRM) media, media from another site that doesn't allow it, and sound in a page you haven't clicked yet
 (clicking anywhere in it fixes that one). Nerdfader detects these, keeps them at up to 100% instead of silencing
-them, and the popup offers **capture mode**:
+them, and the dialog offers **capture mode**:
 
 - The tab's sound is captured and played back louder from a hidden extension page. The browser shows the tab as
   shared while this runs.
@@ -105,16 +108,17 @@ them, and the popup offers **capture mode**:
   again when the tab plays. It also stops right away when you go back to 100% or below.
 - The browser only lets an extension capture a tab after you've clicked the extension on that tab. If it refuses
   to restart capture later (for example after the tab moved to a new page), the tab plays at 100% and opening the
-  popup on it resumes the boost.
+  dialog on it resumes the boost.
 
 Nerdfader can't reach pages the browser keeps extensions out of (`arc://` and `chrome://` pages, the Chrome Web
 Store). Sound from plugins or from other extensions isn't affected either.
 
 **Permissions.** Access to all sites, to run that script in whatever page you're on; storage, to remember volumes and
-settings; tab capture and an offscreen page, for capture mode. Nerdfader sends nothing anywhere: there is no network code in it.
+settings; tab capture and an offscreen page, for capture mode. Nerdfader sends nothing anywhere: there is no
+network code in it.
 
 Volumes live in the browser's extension storage. A tab's own volume lasts until the tab closes or the browser quits;
-the all_tabs and capture_mode switches are remembered across restarts.
+the switches, the shortcut and the scroll key are remembered across restarts.
 
 ## Development
 
@@ -136,36 +140,36 @@ npm run test:real:window   # just the browser-level shortcut, which needs a wind
 
 `test:real` starts Google Chrome with a throwaway profile and drives it over its debugging protocol, which can load
 the extension and click its toolbar icon for real. It installs 1.0.0 and updates it over open tabs, reloads it while
-tabs play, opens the dialog, uses the shortcuts and Option + scroll, runs capture mode under Chrome's real "only after
-you clicked it on this tab" rule, plays a DRM (ClearKey) stream, and visits YouTube, Vimeo, Facebook and Twitch,
-failing on anything that shows up under Errors in chrome://extensions. Its audio output is off, so it's silent, and it never shows a window. The
-window version covers only the browser-level shortcut, which headless Chrome can't (it has no browser UI);
-release.sh runs both.
-Set `CHROME` to use another Chromium-based browser's binary.
+tabs play, opens the dialog, uses the shortcut and modifier + scroll, runs capture mode under Chrome's real "only
+after you clicked it on this tab" rule, plays a DRM (ClearKey) stream, and visits YouTube, Vimeo, Facebook and
+Twitch, failing on anything that shows up under Errors in chrome://extensions. Its audio output is off, so it's
+silent, and it never shows a window. The window version covers only the browser-level shortcut, which headless
+Chrome can't (it has no browser UI); release.sh runs both. Set `CHROME` to use another Chromium-based browser.
 
 To try a change, load the `extension` folder with **Load unpacked** and click the reload arrow after editing.
 
 - `extension/content/main.js`: runs in the page's world; patches media volume and Web Audio, boosts, and reports
   what it can't boost.
 - `extension/content/bridge.js`: runs in the extension's world; passes the level from the background to the page.
-- `extension/content/input.js`: the in-page shortcut and Option + scroll.
+- `extension/content/input.js`: the in-page shortcut and modifier + scroll (on pages and over the dialog).
 - `extension/background.js`: remembers each tab's volume and the switches, pushes levels to tabs, and decides when
   capture mode runs.
-- `extension/offscreen/`: capture mode's playback, limiter and silence detection.
+- `extension/offscreen/`: capture mode's playback, soft clipper and silence detection.
 - `extension/ui/panel.js`: the panel (slider, reset, switches, capture offer), shared by the dialog and the popup.
 - `extension/ui/overlay.js`: the in-page dialog.
 - `extension/popup/`: the toolbar popup, for pages the dialog can't open in.
-- `Tools/make_icon.py`: regenerates the icons (`pip install pillow numpy`, then `python3 Tools/make_icon.py extension/icons`;
-  `python3 Tools/make_icon.py --png docs/nerdfader-icon.png 1024` renders the README version).
+- `Tools/make_icon.py`: regenerates the icons (`pip install pillow numpy`, then
+  `python3 Tools/make_icon.py extension/icons`; `python3 Tools/make_icon.py --png docs/nerdfader-icon.png 1024`
+  renders the README version).
 - `SCREENSHOT=docs/dialog.png npm test` re-renders the README screenshot.
 
 Maintainers publish a release with `./release.sh` (patch bump by default; `minor`, `major` or an exact `X.Y.Z`
-also work). It runs the tests, bumps the version in `manifest.json`, zips the extension, tags, pushes and creates
-the GitHub release.
+also work). It runs the tests (all three suites), bumps the version in `manifest.json`, zips the extension, tags,
+pushes and creates the GitHub release.
 
 ## Feedback
 
-Found a site where it doesn't work, or have an idea? Click **feedback** in the popup, or
+Found a site where it doesn't work, or have an idea? Click **feedback** in the dialog, or
 [open an issue](https://github.com/grumpitect/nerdfader/issues/new/choose).
 
 ## License
