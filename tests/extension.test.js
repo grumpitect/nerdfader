@@ -3,9 +3,8 @@
 // at, read from an isolated world where the volume property is not patched; "heard" values are peaks of a tab's
 // actual sound output, captured the same way capture mode does it.
 //
-// Sound is on (capture and the browser's "playing sound" state need it), but every tab is muted (tab capture still
-// hears it) and every test tone is a 19 kHz tone at -60 dBFS, so the only thing that reaches the speakers, capture
-// mode's own playback, is inaudible too.
+// The browser's audio output is switched off (--disable-audio-output): pages still play, still count as playing
+// sound, and tab capture still hears them, but nothing reaches the speakers.
 // The extension is allowlisted for tab capture, which skips the browser's "user opened the extension on this tab"
 // rule; that rule itself can only be checked by hand.
 import { test, before, after } from "node:test";
@@ -54,7 +53,20 @@ function wav(...parts) {
   });
   return b;
 }
-const sounds = { "/tone.wav": wav(30), "/gap.wav": wav(1, 5, 30) };
+// Loud and dynamic like real speech or music: a body averaging about -20 dBFS with short peaks near full scale
+// (5 ms at 90%, four times a second).
+function loudWav(secs) {
+  const rate = 44100, total = secs * rate, b = Buffer.alloc(44 + total * 2);
+  b.write("RIFF", 0); b.writeUInt32LE(36 + total * 2, 4); b.write("WAVEfmt ", 8); b.writeUInt32LE(16, 16);
+  b.writeUInt16LE(1, 20); b.writeUInt16LE(1, 22); b.writeUInt32LE(rate, 24); b.writeUInt32LE(rate * 2, 28);
+  b.writeUInt16LE(2, 32); b.writeUInt16LE(16, 34); b.write("data", 36); b.writeUInt32LE(total * 2, 40);
+  for (let i = 0; i < total; i++) {
+    const t = i / rate, env = (t * 4) % 1 < 0.02 ? 0.9 : 0.15 + 0.03 * Math.sin(t * 7);
+    b.writeInt16LE(Math.round(env * 32767 * Math.sin(2 * Math.PI * 1000 * t)), 44 + i * 2);
+  }
+  return b;
+}
+const sounds = { "/tone.wav": wav(30), "/gap.wav": wav(1, 5, 30), "/loud.wav": loudWav(30) };
 
 before(async () => {
   server = http.createServer((req, res) => {
@@ -79,14 +91,11 @@ before(async () => {
       "--autoplay-policy=no-user-gesture-required",
       // Otherwise Bluetooth headphones' media buttons (or macOS on their behalf) can pause the test players.
       "--disable-features=MediaSessionService",
+      // No sound reaches the speakers; pages still play, count as playing sound, and can be captured.
+      "--disable-audio-output",
     ],
   });
   sw = context.serviceWorkers()[0] ?? (await context.waitForEvent("serviceworker"));
-  // Every test tab is muted: its sound still reaches tab capture (which the tests measure with), not the speakers.
-  await sw.evaluate(() => {
-    chrome.tabs.onCreated.addListener((tab) => chrome.tabs.update(tab.id, { muted: true }));
-    chrome.tabs.query({}).then((tabs) => tabs.forEach((t) => chrome.tabs.update(t.id, { muted: true })));
-  });
   const id = new URL(sw.url()).host;
   assert.equal(id, EXT_ID, "extension id (needed for the capture allowlist)");
   ext = await context.newPage();
@@ -134,6 +143,28 @@ const heard = (tabId) =>
     stream.getTracks().forEach((t) => t.stop());
     await ctx.close();
     return peak;
+  }, tabId);
+// Loudness (RMS, in dBFS) of what the tab outputs over 1.5 s, and the share of samples at full scale (crackle).
+const loudness = (tabId) =>
+  ext.evaluate(async (tabId) => {
+    const id = await chrome.tabCapture.getMediaStreamId({ targetTabId: tabId });
+    const stream = await navigator.mediaDevices.getUserMedia({
+      audio: { mandatory: { chromeMediaSource: "tab", chromeMediaSourceId: id } },
+    });
+    const ctx = new AudioContext({ sampleRate: 48000 });
+    const meter = ctx.createAnalyser();
+    meter.fftSize = 4096;
+    ctx.createMediaStreamSource(stream).connect(meter);
+    const samples = new Float32Array(4096);
+    let sum = 0, n = 0, full = 0;
+    for (let i = 0; i < 18; i++) {
+      await new Promise((r) => setTimeout(r, 85));
+      meter.getFloatTimeDomainData(samples);
+      for (const s of samples) { sum += s * s; n++; if (Math.abs(s) >= 0.999) full++; }
+    }
+    stream.getTracks().forEach((t) => t.stop());
+    await ctx.close();
+    return { db: 20 * Math.log10(Math.sqrt(sum / n)), clipped: full / n };
   }, tabId);
 const ratio = (a, b, want, msg) => assert.ok(Math.abs(a / b - want) / want < 0.08, `${msg ?? ""} expected x${want}, got x${(a / b).toFixed(3)} (${a} / ${b})`);
 
@@ -554,4 +585,22 @@ test("the panel explains itself instead of breaking when the background doesn't 
   assert.equal(await popup.locator(".slider").isVisible(), false);
   assert.deepEqual(errors, []);
   await popup.close();
+});
+
+test("boosting loud audio makes it clearly louder without crackling", async () => {
+  const { page, tabId } = await openPlayer("/loud.wav");
+  const levels = {};
+  for (const p of [100, 200, 400, 600]) {
+    await send({ type: "setTab", tabId, percent: p });
+    await settle();
+    levels[p] = await loudness(tabId);
+  }
+  const gainDb = (p) => levels[p].db - levels[100].db;
+  console.log(`    loud audio: +${gainDb(200).toFixed(1)} dB at 200%, +${gainDb(400).toFixed(1)} at 400%, +${gainDb(600).toFixed(1)} at 600%`);
+  assert.ok(gainDb(200) > 4.5, "200% is clearly louder");
+  assert.ok(gainDb(400) > gainDb(200) + 3, "400% is clearly louder than 200%");
+  assert.ok(gainDb(600) > gainDb(400) + 1.5, "600% is louder than 400%");
+  for (const p of [200, 400, 600]) assert.ok(levels[p].clipped < 0.001, `no hard clipping at ${p}% (${levels[p].clipped})`);
+  await send({ type: "setTab", tabId, percent: 100 });
+  await page.close();
 });

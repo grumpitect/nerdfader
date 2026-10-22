@@ -107,8 +107,8 @@ npx playwright install chromium
 npm test               # loads the extension into Chromium and measures what tabs actually play at
 ```
 
-The tests mute every tab they open, play 19 kHz tones at -60 dBFS, and measure each tab's real output with tab
-capture (which hears muted tabs), so they're silent.
+The tests switch the browser's audio output off (pages still play and can be captured) and measure each tab's
+real output with tab capture, so they're silent.
 
 ```bash
 npm run test:real      # the same in your installed Google Chrome, the way a person uses it

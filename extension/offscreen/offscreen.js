@@ -1,9 +1,17 @@
 // Capture mode. The browser stops playing a captured tab's sound itself, so this page plays it back through a gain
-// stage and a limiter. It tells the background when a tab has been quiet for a while (so capture can stop) and when
+// stage and a soft clipper. It tells the background when a tab has been quiet for a while (so capture can stop) and when
 // a capture ends on its own (the tab closed, or the user stopped sharing).
 
 const QUIET = 1e-4;          // peak level treated as silence (-80 dBFS)
 const QUIET_FOR = 3000;      // ms of silence before capture stops
+const softClipCurve = (() => {
+  const curve = new Float32Array(4097), knee = 0.6, ceiling = 0.97;
+  for (let i = 0; i < curve.length; i++) {
+    const x = ((i / (curve.length - 1)) * 2 - 1) * 8, a = Math.abs(x);
+    curve[i] = Math.sign(x) * (a < knee ? a : knee + (ceiling - knee) * Math.tanh((a - knee) / (ceiling - knee)));
+  }
+  return curve;
+})();
 const sessions = new Map();  // tabId -> { stream, ctx, gain, peak, timer }
 const tell = (msg) => chrome.runtime.sendMessage(msg).catch(() => {});
 
@@ -17,18 +25,16 @@ async function start({ tabId, streamId, gain }) {
   const g = ctx.createGain();
   g.gain.value = 1;
   g.gain.setTargetAtTime(gain, ctx.currentTime, 0.02);
-  const limiter = ctx.createDynamicsCompressor();
-  limiter.threshold.value = -2;
-  limiter.knee.value = 0;
-  limiter.ratio.value = 20;
-  limiter.attack.value = 0.002;
-  limiter.release.value = 0.2;
-  // Chromium's compressor adds make-up gain (~1.1 dB with these settings); take it back out.
-  const trim = ctx.createGain();
-  trim.gain.value = 10 ** (-(0.6 * 2 * (1 - 1 / 20)) / 20);
+  // The same soft clipper as in pages (content/main.js): unchanged below 60% of full scale, then peaks rounded off
+  // towards a 97% ceiling. The signal is scaled down by 8 to fit the shaper's -1..1 input.
+  const scale = ctx.createGain();
+  scale.gain.value = 1 / 8;
+  const clipper = ctx.createWaveShaper();
+  clipper.curve = softClipCurve;
+  clipper.oversample = "4x";
   const meter = ctx.createAnalyser();
   meter.fftSize = 2048;
-  source.connect(g).connect(limiter).connect(trim).connect(ctx.destination);
+  source.connect(g).connect(scale).connect(clipper).connect(ctx.destination);
   source.connect(meter);
 
   const samples = new Float32Array(meter.fftSize);

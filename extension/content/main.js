@@ -2,8 +2,8 @@
 // Scales everything the page plays by the tab's level without the page noticing:
 // - <audio>/<video>: the real volume is the page's volume times the level (up to 1), and the volume getter keeps
 //   returning the page's own value, so the site's slider still shows what the site set.
-// - Above 100%, elements are routed through Web Audio: a gain stage and a limiter, so loud parts are held down
-//   instead of distorting. Elements the browser won't let Web Audio hear (DRM, media from another site without
+// - Above 100%, elements are routed through Web Audio: a gain stage and a soft clipper, so loud parts are rounded off
+//   instead of crackling. Elements the browser won't let Web Audio hear (DRM, media from another site without
 //   CORS) are left alone, and the frame reports why so the extension can offer capture mode instead.
 // - Web Audio: connections to an AudioContext's destination go through one hidden gain stage per context.
 // bridge.js (the extension's isolated world) sends the level as a "nerdfader2:level" event on window, and passes
@@ -21,39 +21,47 @@
   let level = 1;
   const NativeAudioContext = window.AudioContext;   // pages sometimes replace it later
   const connect = AudioNode.prototype.connect;
+  const softClipCurve = (() => {
+    const curve = new Float32Array(4097), knee = 0.6, ceiling = 0.97;
+    for (let i = 0; i < curve.length; i++) {
+      const x = ((i / (curve.length - 1)) * 2 - 1) * 8, a = Math.abs(x);
+      curve[i] = Math.sign(x) * (a < knee ? a : knee + (ceiling - knee) * Math.tanh((a - knee) / (ceiling - knee)));
+    }
+    return curve;
+  })();
   const disconnect = AudioNode.prototype.disconnect;
 
-  // A gain stage in front of a context's speakers, with a limiter switched in only while boosting.
+  // A gain stage in front of a context's speakers. While boosting, a soft clipper sits after it: below 60% of full
+  // scale the sound passes unchanged, above that peaks are rounded off smoothly towards a 97% ceiling instead of being
+  // chopped off. That keeps nearly all of the boost on audio that is already loud (a limiter or compressor gives most
+  // of it back) without the crackle of plain clipping. The shaper's input range is -1..1, so the signal is scaled down
+  // by 8 on the way in (600% of a full-scale signal is 6).
   function outputStage(ctx) {
     const gain = ctx.createGain();
-    const limiter = ctx.createDynamicsCompressor();
-    limiter.threshold.value = -2;
-    limiter.knee.value = 0;
-    limiter.ratio.value = 20;
-    limiter.attack.value = 0.002;
-    limiter.release.value = 0.2;
-    // Chromium's compressor adds make-up gain (0.6 x the gain reduction at 0 dBFS, ~1.1 dB here); take it back out
-    // so a boost is exactly what the slider says.
-    const trim = ctx.createGain();
-    trim.gain.value = 10 ** (-(0.6 * 2 * (1 - 1 / 20)) / 20);
-    connect.call(limiter, trim);
-    connect.call(trim, ctx.destination);
-    let limited = false;
+    const scale = ctx.createGain();
+    scale.gain.value = 1 / 8;
+    const clipper = ctx.createWaveShaper();
+    clipper.curve = softClipCurve;
+    clipper.oversample = "4x";
+    connect.call(scale, clipper);
+    connect.call(clipper, ctx.destination);
+    let clipping = false;
     const set = (value, glide = true) => {
       const g = gain.gain;
       g.cancelScheduledValues(0);
       if (glide) g.setTargetAtTime(value, ctx.currentTime, 0.01);   // ~50 ms glide, no clicks while dragging
       else g.value = value;
       const boost = value > 1;
-      if (boost === limited) return;
+      if (boost === clipping) return;
       // Connect the new path before dropping the old one so there is no gap.
-      connect.call(gain, boost ? limiter : ctx.destination);
-      disconnect.call(gain, boost ? ctx.destination : limiter);
-      limited = boost;
+      connect.call(gain, boost ? scale : ctx.destination);
+      disconnect.call(gain, boost ? ctx.destination : scale);
+      clipping = boost;
     };
     connect.call(gain, ctx.destination);
     return { input: gain, set };
   }
+
 
   // <audio> and <video>
   const media = HTMLMediaElement.prototype;

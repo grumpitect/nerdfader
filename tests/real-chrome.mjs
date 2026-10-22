@@ -4,8 +4,8 @@
 // Chrome is started with a throwaway profile and driven over its debugging protocol, which can load extensions and
 // click their toolbar icon for real (Extensions.loadUnpacked, Extensions.triggerAction), so capture mode runs under
 // the browser's actual "only after the user clicked the extension on this tab" rule. Errors are read from the same
-// list chrome://extensions shows. Every tab is muted (tab capture still hears muted tabs) and test tones are quiet and
-// high-pitched, so nothing is audible. A Chrome window opens while this runs; it is closed at the end.
+// list chrome://extensions shows. Chrome's audio output is switched off, so nothing is audible (pages still play
+// and can be captured). A Chrome window opens while this runs; it is closed at the end.
 import { test as nodeTest, before, after } from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
@@ -96,6 +96,8 @@ before(async () => {
     "--no-first-run", "--no-default-browser-check", "--autoplay-policy=no-user-gesture-required",
     // Otherwise Bluetooth headphones' media buttons (or macOS on their behalf) can pause the test players.
     "--disable-features=MediaSessionService",
+    // No sound reaches the speakers; pages still play, count as playing sound, and can be captured.
+    "--disable-audio-output",
     "--window-position=40,40", "--window-size=1000,700",
     "-ApplePersistenceIgnoreState", "YES",   // no macOS "reopen windows?" prompt for this throwaway Chrome
     "about:blank",
@@ -151,7 +153,6 @@ async function open(url) {
   const tabId = await bg(async (url) => {
     const tabs = await chrome.tabs.query({});
     const tab = tabs.filter((t) => t.url === url || t.pendingUrl === url).sort((a, b) => b.id - a.id)[0];
-    await chrome.tabs.update(tab.id, { muted: true });
     return tab.id;
   }, page.url());
   return { page, tabId };
