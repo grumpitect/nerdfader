@@ -2,30 +2,36 @@
 
 # Nerdfader
 
-**A volume slider for every browser tab.**
+**A volume slider for every browser tab, from 0 to 600%.**
 
 Nerdfader is a small, free, open-source browser extension for Arc, Chrome and other Chromium browsers. Click its
-icon, drag the slider, and that tab gets quieter. That's it: no tab capture, no "this tab is being shared"
-highlight, no extra windows.
+icon, drag the slider, and that tab gets quieter (or louder). Most sites are boosted from inside the page, with no
+"this tab is being shared" highlight; capture mode is only used, with your OK, for the few sites that block that.
 
 Made for the [Nerdative](https://www.youtube.com/@nerdative) channel on YouTube, by the same person as
 [Nerdwave](https://github.com/grumpitect/nerdwave).
 
-<p align="center"><img src="docs/popup-1.0.0.png" width="320" alt="Nerdfader popup"></p>
+<p align="center"><img src="docs/popup.png" width="320" alt="Nerdfader popup"></p>
 
 ## Features
 
-- **One slider per tab.** 0 to 100%. Each tab remembers its volume across reloads and navigation, until you close it.
+- **One slider per tab.** 0 to 600%. Each tab remembers its volume across reloads and navigation, until you close it.
+- **Boost without distortion.** Above 100% a limiter holds loud parts down instead of letting them crackle.
+  600% is 6x (+15.6 dB), the same scale as other boosters.
+- **Capture mode, only when needed.** Netflix, Spotify and other DRM sites (and media served from another site
+  without permission to process it) can't be boosted from inside the page. For those, Nerdfader offers capture
+  mode: once for that tab, or always. It runs only while the tab plays sound: it stops a moment after the tab
+  pauses or goes quiet, and starts again when it plays.
 - **Reset.** One click (or **r**) puts the tab back to 100%.
 - **all_tabs.** Turn it on and one slider sets every tab, including ones you open later. Turn it off and every
   tab goes back to the volume it had before.
 - **Badge.** The toolbar icon shows the tab's volume when it isn't 100%.
-- **Keyboard and mouse wheel.** ←/→ change by 5% (hold Shift for 1%), **0** to **9** jump to 0 to 90%,
-  **r** resets, and scrolling over the popup works too.
+- **Keyboard and mouse wheel.** ←/→ change by 5% (25% above 100%; hold Shift for finer steps), **0** to **9**
+  jump to 0 to 90%, **r** resets, and scrolling over the popup works too.
 - **The site doesn't notice.** YouTube's own volume slider keeps working and keeps showing its own value;
   Nerdfader scales whatever the site plays.
-- **Even-feeling slider.** It uses the same curve as VLC and Nerdwave, so 50% sounds about half as loud instead
-  of barely quieter.
+- **Even-feeling slider.** Below 100% it uses the same curve as VLC and Nerdwave, so 50% sounds about half as
+  loud instead of barely quieter. The first half of the bar is 0 to 100%, the second half 100 to 600%.
 
 ## Install
 
@@ -55,23 +61,36 @@ folder), then click the reload arrow on Nerdfader's card or restart the browser.
 ## How it works
 
 Browsers give extensions two ways to change a tab's volume. One is to capture the tab's audio (what Volume Master
-does), which is why those extensions highlight the tab as being shared and can boost past 100%. Nerdfader uses
-the other: a small script inside each page (and each frame in it) that scales the page's own sound.
+does), which highlights the tab as being shared. Nerdfader uses the other whenever it can: a small script inside
+each page (and each frame in it) that scales the page's own sound.
 
 - **`<audio>` and `<video>`:** the element plays at the site's volume times yours. The site still reads back the
-  volume it set, so its own controls don't jump.
-- **Web Audio** (games, some players): sound headed for the speakers passes through one extra gain stage per
-  audio context, which glides to the new level so dragging doesn't click.
+  volume it set, so its own controls don't jump. Above 100%, the element's sound goes through a gain stage and a
+  limiter (Web Audio).
+- **Web Audio** (games, some players): sound headed for the speakers passes through the same gain stage, which
+  glides to the new level so dragging doesn't click.
 
-The trade-offs: it can't make a tab louder than the site plays it, and it can't reach pages the browser keeps
-extensions out of (`arc://` and `chrome://` pages, the Chrome Web Store). Sound from plugins or from other
-extensions isn't affected either.
+The browser won't let a page's script process three kinds of sound, so those can't be boosted from inside:
+protected (DRM) media, media from another site that doesn't allow it, and sound in a page you haven't clicked yet
+(clicking anywhere in it fixes that one). Nerdfader detects these, keeps them at up to 100% instead of silencing
+them, and the popup offers **capture mode**:
 
-Nerdfader asks for **access to all sites** because it has to run that script in whatever page you're on, and
-**storage** to remember volumes. It sends nothing anywhere: there is no network code in it.
+- The tab's sound is captured and played back louder from a hidden extension page. The browser shows the tab as
+  shared while this runs.
+- It runs only while needed. It stops a moment (1.5 s) after the tab pauses, or after 3 s of silence, and starts
+  again when the tab plays. It also stops right away when you go back to 100% or below.
+- The browser only lets an extension capture a tab after you've clicked the extension on that tab. If it refuses
+  to restart capture later (for example after the tab moved to a new page), the tab plays at 100% and opening the
+  popup on it resumes the boost.
+
+Nerdfader can't reach pages the browser keeps extensions out of (`arc://` and `chrome://` pages, the Chrome Web
+Store). Sound from plugins or from other extensions isn't affected either.
+
+**Permissions.** Access to all sites, to run that script in whatever page you're on; storage, to remember volumes;
+tab capture and an offscreen page, for capture mode. Nerdfader sends nothing anywhere: there is no network code in it.
 
 Volumes live in the browser's extension storage. A tab's own volume lasts until the tab closes or the browser quits;
-the all_tabs switch and its volume are remembered across restarts.
+the all_tabs and capture_mode switches are remembered across restarts.
 
 ## Development
 
@@ -80,14 +99,20 @@ git clone https://github.com/grumpitect/nerdfader.git
 cd nerdfader
 npm install            # Playwright, for the tests only; the extension has no dependencies
 npx playwright install chromium
-npm test               # loads the extension into Chromium and checks what pages actually play at
+npm test               # loads the extension into Chromium and measures what tabs actually play at
 ```
+
+The tests play 19 kHz tones at -60 dBFS (inaudible) and measure each tab's real output with tab capture. Capture
+mode's "only after you clicked the extension on this tab" rule is bypassed in the tests, so check that by hand.
 
 To try a change, load the `extension` folder with **Load unpacked** and click the reload arrow after editing.
 
-- `extension/content/main.js`: runs in the page's world; patches media volume and Web Audio.
+- `extension/content/main.js`: runs in the page's world; patches media volume and Web Audio, boosts, and reports
+  what it can't boost.
 - `extension/content/bridge.js`: runs in the extension's world; passes the level from the background to the page.
-- `extension/background.js`: remembers each tab's volume and the all_tabs override, and pushes levels to tabs.
+- `extension/background.js`: remembers each tab's volume and the switches, pushes levels to tabs, and decides when
+  capture mode runs.
+- `extension/offscreen/`: capture mode's playback, limiter and silence detection.
 - `extension/popup/`: the slider.
 - `Tools/make_icon.py`: regenerates the icons (`pip install pillow numpy`, then `python3 Tools/make_icon.py extension/icons`;
   `python3 Tools/make_icon.py --png docs/nerdfader-icon.png 1024` renders the README version).

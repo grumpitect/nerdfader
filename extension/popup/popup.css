@@ -45,7 +45,8 @@ header { display: flex; justify-content: space-between; align-items: baseline; }
 .segments { flex: 1; display: grid; grid-template-columns: repeat(20, 1fr); gap: 2px; height: 16px; }
 .segments i { border-radius: 2px; background: var(--off); }
 .segments i.on { background: var(--amber); }
-body.all .segments i.on { background: var(--pink); }
+.segments i.boost.on { background: var(--pink); }
+.segments i:nth-child(10) { margin-right: 3px; }   /* a small gap marks 100% */
 
 /* The real slider sits invisibly on top of the segments: mouse, keyboard and screen readers all use it. */
 #slider { position: absolute; inset: -6px 0; width: 100%; height: calc(100% + 12px); margin: 0; opacity: 0; cursor: pointer; }
@@ -83,7 +84,17 @@ button:disabled { color: var(--off); border-color: var(--off); background: trans
 .toggle input:checked ~ .switch { background: var(--pink); }
 .toggle input:checked ~ .switch::after { transform: translateX(14px); }
 
-.hint { color: var(--muted); font-size: 12px; margin: 4px 0 0 18px; }
+.hint { color: var(--muted); font-size: 12px; margin: 4px 0 8px 18px; }
+
+.note.capture { color: var(--cyan); }
+
+.offer { margin-top: 10px; padding: 10px; border: 1px dashed var(--pink); border-radius: 8px; }
+.offer[hidden] { display: none; }
+.offer p { margin: 0; font-size: 12px; }
+.offer .buttons { display: flex; gap: 8px; margin: 8px 0; }
+.offer .hint { margin: 0; }
+button.primary { color: var(--pink); border-color: var(--pink); }
+button.primary:hover { background: rgba(255, 79, 168, 0.12); }
 
 footer { display: flex; justify-content: space-between; color: var(--muted); font-size: 11px; }
 footer a { color: var(--muted); text-decoration: none; }
