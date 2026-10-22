@@ -328,7 +328,7 @@ test("copying new files into the folder makes the extension reload itself once, 
   if (headless.length) await p.page.bringToFront();
   await p.page.mouse.move(300, 300);
   await p.page.keyboard.down("Alt");
-  await p.page.mouse.wheel(0, -100);
+  await p.page.mouse.wheel(0, 100);   // down is louder
   await p.page.keyboard.up("Alt");
   assert.equal(await until(async () => (await state(p.tabId)).tab === 45, 2000), true, "Option + scroll on the old tab");
   await p.page.keyboard.press("Escape");
@@ -406,7 +406,7 @@ test("shortcuts: the browser shortcut is registered, the page shortcut toggles t
 
   await p.page.mouse.move(300, 300);
   await p.page.keyboard.down("Alt");
-  await p.page.mouse.wheel(0, -100);
+  await p.page.mouse.wheel(0, 100);   // down is louder
   await p.page.keyboard.up("Alt");
   assert.equal(await until(async () => (await state(p.tabId)).tab === 125, 2000), true, "Option + scroll: one step");
   assert.equal(await until(async () => (await dialog(p.page)) === "ready", 2000), true, "dialog shows");

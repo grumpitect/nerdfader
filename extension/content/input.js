@@ -49,7 +49,7 @@
     else if (e.timeStamp - lastStep > 200) { steps = Math.sign(delta); carried = 0; }
     if (!steps) return;
     lastStep = e.timeStamp;
-    ask({ type: "nudge", steps: -steps }).catch(() => {});
+    ask({ type: "nudge", steps }).catch(() => {});   // scrolling down (a swipe up with natural scrolling) is louder
   }
 
   addEventListener("keydown", onKey, true);

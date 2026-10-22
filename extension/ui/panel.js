@@ -445,7 +445,7 @@ globalThis.NerdfaderPanel = (() => {
       else if (e.timeStamp - lastStep > 200) { steps = Math.sign(delta); carried = 0; }
       if (!steps) return;
       lastStep = e.timeStamp;
-      setPercent(toPercent(Math.min(200, Math.max(0, toPos(current()) - 5 * steps))));
+      setPercent(toPercent(Math.min(200, Math.max(0, toPos(current()) + 5 * steps))));   // scrolling down is louder
     }
     // In the in-page dialog the backdrop passes every scroll on (see ui/overlay.js); the popup listens itself.
     if (!close) root.addEventListener("wheel", wheel, { passive: false });

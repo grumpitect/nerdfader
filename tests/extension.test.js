@@ -671,8 +671,8 @@ test("Option/Alt + scroll changes the volume and shows the dialog for a moment; 
   assert.equal(await until(() => page.evaluate(() => scrollY > 0), 2000), true, "page scrolls");
   assert.equal(await dialogOpen(page), false);
 
-  // One notch up: one step, and the dialog shows up; left alone, it goes away after about 2 s.
-  await altWheel(-100);
+  // One notch down (louder): one step, and the dialog shows up; left alone, it goes away after about 2 s.
+  await altWheel(100);
   assert.equal(await until(async () => (await state()) === 125, 2000), true, "a notch is one step");
   assert.equal(await until(() => dialogReady(page), 2000), true, "the dialog shows");
   const shownAt = Date.now();
@@ -680,12 +680,12 @@ test("Option/Alt + scroll changes the volume and shows the dialog for a moment; 
   assert.ok(Date.now() - shownAt > 1500, "not too soon");
 
   // A tiny notch counts too. Scrolling over the dialog (no Option needed) keeps changing the volume and keeps it up.
-  await altWheel(-4);
+  await altWheel(4);
   assert.equal(await until(async () => (await state()) === 150, 2000), true, "a small notch is one step too");
   await until(() => dialogReady(page), 2000);
   for (let i = 0; i < 4; i++) {
     await wait(700);
-    await page.mouse.wheel(0, 100);   // one notch down each: 150 -> 125 -> 100 -> 95 -> 90
+    await page.mouse.wheel(0, -100);   // one notch up (quieter) each: 150 -> 125 -> 100 -> 95 -> 90
   }
   assert.equal(await dialogOpen(page), true, "kept up while scrolling");
   assert.equal(await until(async () => (await state()) === 90, 1000), true, "each notch over the dialog is a step");

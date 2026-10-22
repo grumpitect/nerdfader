@@ -34,7 +34,7 @@ Made for the [Nerdative](https://www.youtube.com/@nerdative) channel on YouTube,
   the shortcut, press the keys; Delete removes it): it works on any page and inside embedded players. The browser's
   own shortcut also works from the address bar; change it at `arc://extensions/shortcuts` (the dialog links there).
 - **⌥ + scroll.** Hold Option (Alt) and scroll anywhere, with a mouse wheel or two fingers on a trackpad, to change
-  the tab's volume. The dialog shows for a moment and goes away 2 seconds after you stop; click or type in it and it
+  the tab's volume: scrolling down turns it up (with macOS natural scrolling, that's a two-finger swipe up). The dialog shows for a moment and goes away 2 seconds after you stop; click or type in it and it
   stays until you click away or press Esc. Turn it off with **option_scroll** in the dialog. On a Mac this works with
   a trackpad; macOS browsers don't pass Option + mouse-wheel scrolling to pages at all, so with a mouse use the
   shortcut instead.
