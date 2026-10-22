@@ -49,6 +49,7 @@
   }
   const wrap = document.createElement("div");
   wrap.innerHTML = `<div class="backdrop"><div class="dialog" role="dialog" aria-modal="true" aria-label="Nerdfader volume"></div></div>`;
+  wrap.hidden = true;
   shadow.append(wrap);
   const backdrop = wrap.querySelector(".backdrop");
   const dialog = wrap.querySelector(".dialog");
@@ -79,8 +80,11 @@
   addEventListener("pagehide", close);
   backdrop.addEventListener("pointerdown", (e) => { if (e.target === backdrop) close(); });
 
+  // Shown once the panel has its values, so it never appears half-filled.
   NerdfaderPanel.mount(dialog, { url: location.href, close }).then((p) => {
     panel = p;
-    if (closed) p.destroy();
+    if (closed) return p.destroy();
+    wrap.hidden = false;
+    dialog.querySelector(".slider").focus();
   });
 })();

@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Nerdfader",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "A volume slider for every tab, up to 600%. Set one tab or all of them at once, and reset with one click.",
   "homepage_url": "https://github.com/grumpitect/nerdfader",
   "minimum_chrome_version": "116",

@@ -178,8 +178,11 @@ globalThis.NerdfaderPanel = (() => {
     if (close) $("keys").textContent += " · esc close";
     $("version").textContent = "v" + chrome.runtime.getManifest().version;
 
-    // Opening the panel lets the browser capture this tab, so a paused capture mode starts again here.
-    let state = await call("opened");
+    // A quick read first so the panel shows the right values straight away. In the toolbar popup, opening it is
+    // also what lets the browser capture this tab, so a paused capture mode starts again (the dialog's icon click
+    // already did that in the background).
+    let state = await call("state");
+    if (!close) call("opened").then((reply) => { if (reply && !reply.error && !busy) { state = reply; render(); } });
 
     // One request in flight at a time; while dragging, only the latest value is sent next.
     let pending = null, busy = false, changedAt = 0;
