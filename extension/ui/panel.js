@@ -53,7 +53,7 @@ globalThis.NerdfaderPanel = (() => {
 .nf .label { color: var(--muted); }
 .nf .percent { width: 4ch; text-align: right; font-weight: 700; }
 
-.nf .bar { position: relative; flex: 1; display: flex; align-items: center; gap: 4px; color: var(--muted); }
+.nf .bar { position: relative; flex: 1; display: flex; align-items: center; justify-content: center; gap: 4px; color: var(--muted); }
 .nf .segments {
   flex: 1; display: grid; gap: 2px; height: 16px; justify-content: center;
   grid-template-columns: repeat(10, var(--seg, 1fr)) 1px repeat(10, var(--seg, 1fr));
@@ -507,11 +507,15 @@ globalThis.NerdfaderPanel = (() => {
     if (!close) root.addEventListener("wheel", wheel, { passive: false });
 
     // Whole-pixel segments: 20 of them, 20 gaps of 2 px and the 1 px 100% marker in the space the bar has.
+    // The bar then shrinks to exactly fit them, so the brackets hug the segments and any spare pixels go outside.
     const fitSegments = () => {
       const segs = $("segments");
-      segs.style.removeProperty("--seg");
+      for (const p of ["--seg", "width", "flex"]) segs.style.removeProperty(p);
       const width = Math.floor((segs.getBoundingClientRect().width - 41) / 20);
-      if (width > 0) segs.style.setProperty("--seg", `${width}px`);
+      if (width <= 0) return;
+      segs.style.setProperty("--seg", `${width}px`);
+      segs.style.setProperty("width", `${width * 20 + 41}px`);
+      segs.style.setProperty("flex", "none");
     };
     fitSegments();
     new ResizeObserver(fitSegments).observe(root);

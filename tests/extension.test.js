@@ -853,5 +853,12 @@ test("all 20 volume segments are the same width, with a gap marking 100%", async
   assert.ok(widths.every((w) => w === widths[0] && Number.isInteger(w)), `equal, whole-pixel widths: ${widths.join(", ")}`);
   const [ten, eleven, nine] = await popup.evaluate(() => [10, 11, 9].map((n) => document.querySelectorAll(".segments i")[n - 1].getBoundingClientRect()));
   assert.ok(eleven.left - ten.right > (ten.left - nine.right) + 0.5, "a wider gap between 100% and the boost half");
+  // The brackets hug the segments: the same small space between "[" and the first segment as between the last and "]".
+  const [open, close, first, last] = await popup.evaluate(() => {
+    const [o, c] = document.querySelectorAll(".bracket");
+    const segs = document.querySelectorAll(".segments i");
+    return [o.getBoundingClientRect(), c.getBoundingClientRect(), segs[0].getBoundingClientRect(), segs[19].getBoundingClientRect()];
+  });
+  assert.ok(Math.abs((first.left - open.right) - (close.left - last.right)) < 1 && first.left - open.right < 7, "brackets hug the segments");
   await popup.close();
 });
