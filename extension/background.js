@@ -165,6 +165,7 @@ async function state(tabId) {
 const handlers = {
   // From a page (bridge.js) as it loads: which level to play at.
   async hello(_msg, sender) {
+    reloadIfFilesChanged();
     const tabId = sender.tab.id;
     if (sender.frameId === 0) {
       // A new page: forget what the previous one reported.
@@ -297,6 +298,7 @@ function duplicate(tabId, source) {
 // { moment: true } shows it for a moment (Option/Alt + scroll), or keeps it up if it is already showing.
 // { source: "shortcut" } is the page's own shortcut; anything else came through the icon or the browser shortcut.
 async function openPanel(tab, { moment = false, source = "action" } = {}) {
+  reloadIfFilesChanged();
   if (!moment) {
     if (duplicate(tab.id, source)) return;
     reconcile(tab.id, { opened: true });   // clicking the icon is what allows capture mode on this tab
@@ -337,6 +339,36 @@ chrome.tabs.onReplaced.addListener(async (added, removed) => {
   if (percent !== DEFAULT) await chrome.storage.session.set({ [key.tab(added)]: percent });
 });
 
+// Loaded from a folder (Load unpacked: installs from GitHub, and development), the extension notices when its files on
+// disk change (an update copied in) and reloads itself, so the whole extension runs the new version together instead
+// of new dialog files talking to an old background until someone clicks the reload arrow. The fingerprint of the
+// files is stored when this version starts (onInstalled, which also runs on reloads); open tabs are taken over by the
+// new version's scripts.
+const WATCHED = [
+  "manifest.json", "background.js", "content/main.js", "content/bridge.js", "content/input.js",
+  "ui/panel.js", "ui/overlay.js", "popup/popup.html", "popup/popup.js", "offscreen/offscreen.js",
+];
+async function filesFingerprint() {
+  const texts = await Promise.all(WATCHED.map((f) =>
+    fetch(chrome.runtime.getURL(f), { cache: "no-store" }).then((r) => (r.ok ? r.text() : ""), () => "")));
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(texts.join("\0")));
+  return [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, "0")).join("");
+}
+// Checks wait 3 s after this background starts: after a reload, onInstalled is still saving the new fingerprint, and
+// comparing against the previous version's would reload again and again.
+const startedAt = Date.now();
+let checking = null;   // checks that overlap share one
+function reloadIfFilesChanged() {
+  if (Date.now() - startedAt < 3000) return;
+  checking ??= (async () => {
+    if ((await chrome.management.getSelf()).installType !== "development") return;
+    const { filesFingerprint: running } = await chrome.storage.local.get("filesFingerprint");
+    if (running && running !== (await filesFingerprint())) chrome.runtime.reload();
+  })().catch(() => {}).finally(() => (checking = null));
+}
+setTimeout(reloadIfFilesChanged, 3500);
+chrome.tabs.onActivated.addListener(() => reloadIfFilesChanged());
+
 function badgeColors() {
   chrome.action.setBadgeBackgroundColor({ color: "#ff3fa4" });
   chrome.action.setBadgeTextColor?.({ color: "#ffffff" });
@@ -344,6 +376,7 @@ function badgeColors() {
 
 chrome.runtime.onInstalled.addListener(async () => {
   badgeColors();
+  chrome.storage.local.set({ filesFingerprint: await filesFingerprint() });
   // Content scripts only start in pages loaded after install, so add them to the tabs already open.
   for (const tab of await chrome.tabs.query({ url: ["http://*/*", "https://*/*", "file:///*"] })) {
     const target = { tabId: tab.id, allFrames: true };

@@ -375,8 +375,10 @@ globalThis.NerdfaderPanel = (() => {
       if (e.key === "Escape" && close) { e.preventDefault(); close(); return; }
       const s = state.settings?.shortcut;
       if (close && s && e.code === s.code && e.altKey === s.alt && e.ctrlKey === s.ctrl && e.metaKey === s.meta && e.shiftKey === s.shift) {
-        e.preventDefault();   // the shortcut that opened the dialog closes it too
-        close();
+        // The shortcut that opened the dialog closes it too, but only a new press: while the keys are still held
+        // from opening it, the system repeats them, and those repeats arrive here once the dialog has focus.
+        e.preventDefault();
+        if (!e.repeat) close();
         return;
       }
       if (!editable() || e.metaKey || e.ctrlKey || e.altKey) return;

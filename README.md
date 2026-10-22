@@ -35,7 +35,9 @@ Made for the [Nerdative](https://www.youtube.com/@nerdative) channel on YouTube,
   own shortcut also works from the address bar; change it at `arc://extensions/shortcuts` (the dialog links there).
 - **⌥ + scroll.** Hold Option (Alt) and scroll anywhere, with a mouse wheel or two fingers on a trackpad, to change
   the tab's volume. The dialog shows for a moment and goes away 2 seconds after you stop; click or type in it and it
-  stays until you click away or press Esc. Turn it off with **option_scroll** in the dialog.
+  stays until you click away or press Esc. Turn it off with **option_scroll** in the dialog. On a Mac this works with
+  a trackpad; macOS browsers don't pass Option + mouse-wheel scrolling to pages at all, so with a mouse use the
+  shortcut instead.
 - **Keyboard and mouse wheel in the dialog.** ←/→ change by 5% (25% above 100%; hold Shift for finer steps), **0**
   to **9** jump to 0 to 90%, **r** resets, **Esc** closes, and scrolling over the dialog works too.
 - **Four-finger gestures?** macOS keeps three- and four-finger trackpad gestures to itself; web pages and extensions
@@ -69,8 +71,9 @@ read it first if you like.
 3. Pin it to your toolbar so the slider is one click away.
 
 Tabs that were already open start working right away. **Updating:** run the install command again (or replace the
-folder), then click the reload arrow on Nerdfader's card or restart the browser. Your settings stay, and open tabs
-switch to the new version on their own. (Coming from 1.0.0, reload tabs that were open during the update once.)
+folder). Nerdfader notices its files changed and reloads itself the next time you load a page or switch tabs; open
+tabs switch to the new version on their own and your settings stay. (Updating from a version before 1.1.0, click
+the reload arrow on Nerdfader's card once.)
 
 ## How it works
 

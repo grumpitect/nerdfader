@@ -247,6 +247,40 @@ test("reloading the extension while tabs play: no errors, tabs keep working", as
   await player.page.close();
 });
 
+test("copying new files into the folder makes the extension reload itself once, and open tabs keep working", async () => {
+  await install("working tree");
+  const p = await open(`${origin}/player?src=/tone.wav`);
+  await wait(4000);   // past the startup grace period
+  const marker = async () => bg(() => self.__marker ?? null).catch(() => "gone");
+  await bg(() => { self.__marker = "old"; });
+
+  // An update lands in the folder (install.sh and the dev copy swap the whole folder at once).
+  const file = path.join(extDir, "content/input.js");
+  fs.writeFileSync(file, fs.readFileSync(file, "utf8") + "\n// updated\n");
+  const other = await ctx.newPage();
+  await other.goto(`${origin}/player?another=1`);   // any page load lets the extension notice
+  assert.equal(await until(async () => (await marker()) === null, 8000), true, "reloaded by itself");
+  await bg(() => { self.__marker = "new"; });
+  await wait(6000);
+  assert.equal(await marker(), "new", "and only once (no reload loop)");
+
+  // The tab that was open keeps working with the new version.
+  await call({ type: "setTab", tabId: p.tabId, percent: 40 });
+  await wait(300);
+  near((await realVolume(p.tabId))[0], gain(40), "volume");
+  await p.page.bringToFront();
+  await p.page.mouse.move(300, 300);
+  await p.page.keyboard.down("Alt");
+  await p.page.mouse.wheel(0, -100);
+  await p.page.keyboard.up("Alt");
+  assert.equal(await until(async () => (await state(p.tabId)).tab === 45, 2000), true, "Option + scroll on the old tab");
+  await p.page.keyboard.press("Escape");
+  await call({ type: "setTab", tabId: p.tabId, percent: 100 });
+  assert.deepEqual(await errors(), []);
+  await other.close();
+  await p.page.close();
+});
+
 test("the toolbar icon opens the dialog quickly, keys stay in it, and it closes on Esc, outside clicks and a second click", async () => {
   const p = await open(`${origin}/player?src=/tone.wav`);
   await p.page.evaluate(() => { window.keys = 0; document.addEventListener("keydown", () => window.keys++); });
@@ -295,6 +329,20 @@ test("shortcuts: the browser shortcut is registered, the page shortcut toggles t
   assert.equal(await until(async () => (await dialog(p.page)) === "ready", 3000), true, "page shortcut opens");
   await p.page.keyboard.press("Alt+Shift+KeyV");
   assert.equal(await until(async () => (await dialog(p.page)) === "closed", 1000), true, "and closes");
+
+  // Held down: macOS repeats the keys about every 35 ms after half a second. The dialog stays; a new press closes it.
+  const keys = await ctx.newCDPSession(p.page);
+  const key = (type, autoRepeat = false) =>
+    keys.send("Input.dispatchKeyEvent", { type, modifiers: 1 | 8, key: "V", code: "KeyV", windowsVirtualKeyCode: 86, autoRepeat });
+  await key("rawKeyDown");
+  await wait(450);
+  for (let i = 0; i < 15; i++) { await key("rawKeyDown", true); await wait(35); }
+  await key("keyUp");
+  await wait(500);
+  assert.equal(await dialog(p.page), "ready", "holding the shortcut keeps the dialog open");
+  await key("rawKeyDown");
+  await key("keyUp");
+  assert.equal(await until(async () => (await dialog(p.page)) === "closed", 1000), true, "a new press closes it");
 
   await p.page.mouse.move(300, 300);
   await p.page.keyboard.down("Alt");
