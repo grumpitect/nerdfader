@@ -1,0 +1,11 @@
+{
+  "name": "nerdfader",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node --test tests/"
+  },
+  "devDependencies": {
+    "playwright": "^1.64.1"
+  }
+}

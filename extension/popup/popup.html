@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Nerdfader</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <header>
+    <span class="brand">nerdfader</span>
+    <span class="version" id="version"></span>
+  </header>
+
+  <div class="target" id="target"></div>
+
+  <div class="vol">
+    <span class="label">vol</span>
+    <div class="bar" id="bar">
+      <span class="bracket">[</span>
+      <div class="segments" id="segments"></div>
+      <span class="bracket">]</span>
+      <input type="range" id="slider" min="0" max="100" step="1" aria-label="Volume">
+    </div>
+    <span class="percent" id="percent"></span>
+  </div>
+
+  <div class="row">
+    <span class="note" id="note"></span>
+    <button id="reset" title="Back to 100% (r)">reset</button>
+  </div>
+
+  <div class="rule"></div>
+
+  <label class="toggle" id="toggleRow">
+    <input type="checkbox" id="override">
+    <span class="caret">&gt;</span>
+    <span class="name">all_tabs</span>
+    <span class="switch" aria-hidden="true"></span>
+  </label>
+  <div class="hint" id="overrideHint"></div>
+
+  <div class="rule"></div>
+
+  <footer>
+    <span class="keys">←/→ ±5 · 0 to 9 · r reset</span>
+    <a href="https://github.com/grumpitect/nerdfader/issues/new/choose" target="_blank">feedback ↗</a>
+  </footer>
+
+  <script src="popup.js" type="module"></script>
+</body>
+</html>

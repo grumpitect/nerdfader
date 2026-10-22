@@ -1,0 +1,92 @@
+:root {
+  --bg: #170c2c;
+  --edge: #3a2366;
+  --text: #e9e3ff;
+  --muted: #8f84b0;
+  --pink: #ff4fa8;
+  --cyan: #5ee6ff;
+  --amber: #ffc857;
+  --off: #3b2c5c;
+  --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  width: 320px;
+  padding: 14px 16px 12px;
+  background: var(--bg);
+  color: var(--text);
+  font: 13px/1.4 var(--mono);
+  user-select: none;
+}
+
+header { display: flex; justify-content: space-between; align-items: baseline; }
+.brand { color: var(--pink); font-weight: 700; font-size: 15px; }
+.version { color: var(--muted); }
+
+.target {
+  margin: 10px 0 8px;
+  color: var(--cyan);
+  font-weight: 700;
+  text-align: center;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.target.all { color: var(--pink); }
+
+.vol { display: flex; align-items: center; gap: 8px; }
+.label { color: var(--muted); }
+.percent { width: 4ch; text-align: right; font-weight: 700; }
+
+.bar { position: relative; flex: 1; display: flex; align-items: center; gap: 4px; color: var(--muted); }
+.segments { flex: 1; display: grid; grid-template-columns: repeat(20, 1fr); gap: 2px; height: 16px; }
+.segments i { border-radius: 2px; background: var(--off); }
+.segments i.on { background: var(--amber); }
+body.all .segments i.on { background: var(--pink); }
+
+/* The real slider sits invisibly on top of the segments: mouse, keyboard and screen readers all use it. */
+#slider { position: absolute; inset: -6px 0; width: 100%; height: calc(100% + 12px); margin: 0; opacity: 0; cursor: pointer; }
+.bar:has(#slider:focus-visible) .segments { outline: 1px dashed var(--cyan); outline-offset: 3px; }
+
+.row { display: flex; justify-content: space-between; align-items: center; margin-top: 8px; min-height: 26px; }
+.note { color: var(--muted); font-size: 12px; }
+
+button {
+  font: inherit;
+  color: var(--cyan);
+  background: transparent;
+  border: 1px solid var(--cyan);
+  border-radius: 6px;
+  padding: 2px 10px;
+  cursor: pointer;
+}
+button:hover { background: rgba(94, 230, 255, 0.12); }
+button:disabled { color: var(--off); border-color: var(--off); background: transparent; cursor: default; }
+
+.rule { margin: 10px 0; border-top: 1px dashed var(--edge); }
+
+.toggle { display: flex; align-items: center; gap: 8px; cursor: pointer; }
+.toggle input { position: absolute; opacity: 0; pointer-events: none; }
+.caret { color: var(--pink); visibility: hidden; }
+.toggle input:checked ~ .caret { visibility: visible; }
+.toggle input:checked ~ .name { color: var(--pink); }
+.toggle input:focus-visible ~ .name { outline: 1px dashed var(--cyan); outline-offset: 2px; }
+.name { flex: 1; }
+.switch { width: 30px; height: 16px; border-radius: 8px; background: var(--off); position: relative; transition: background 0.15s; }
+.switch::after {
+  content: ""; position: absolute; top: 2px; left: 2px; width: 12px; height: 12px; border-radius: 50%;
+  background: var(--text); transition: transform 0.15s;
+}
+.toggle input:checked ~ .switch { background: var(--pink); }
+.toggle input:checked ~ .switch::after { transform: translateX(14px); }
+
+.hint { color: var(--muted); font-size: 12px; margin: 4px 0 0 18px; }
+
+footer { display: flex; justify-content: space-between; color: var(--muted); font-size: 11px; }
+footer a { color: var(--muted); text-decoration: none; }
+footer a:hover { color: var(--cyan); }
+
+body.unsupported .vol, body.unsupported .row { opacity: 0.4; pointer-events: none; }
