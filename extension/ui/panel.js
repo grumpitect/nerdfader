@@ -35,8 +35,9 @@ globalThis.NerdfaderPanel = (() => {
 .nf p { margin: 0; }
 
 .nf header { display: flex; justify-content: space-between; align-items: baseline; }
-.nf .brand { color: var(--pink); font-weight: 700; font-size: 15px; }
-.nf .version { color: var(--muted); }
+.nf .brand { color: var(--pink); font-weight: 700; font-size: 15px; text-decoration: none; }
+.nf .version { color: var(--muted); text-decoration: none; }
+.nf .brand:hover, .nf .version:hover { text-decoration: underline; }
 
 .nf .target {
   margin: 10px 0 8px;
@@ -138,8 +139,8 @@ globalThis.NerdfaderPanel = (() => {
 
   const html = `
 <header>
-  <span class="brand">nerdfader</span>
-  <span class="version"></span>
+  <a class="brand" href="https://github.com/grumpitect/nerdfader" target="_blank" rel="noopener" title="Nerdfader on GitHub">nerdfader</a>
+  <a class="version" href="https://github.com/grumpitect/nerdfader/releases" target="_blank" rel="noopener" title="Release notes"></a>
 </header>
 <div class="target"></div>
 <div class="vol">

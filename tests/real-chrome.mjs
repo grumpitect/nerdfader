@@ -387,17 +387,17 @@ test("shortcuts: the browser shortcut is registered, the page shortcut toggles t
   // in-page shortcut below still does the job, and the dialog shows "browser: none · change").
   const browserShortcut = (await call({ type: "state", tabId: 0 })).browserShortcut;
   console.log(`    browser-level shortcut on a fresh install: "${browserShortcut}"`);
-  assert.ok(["⇧⌘L", ""].includes(browserShortcut), `browser-level shortcut is ⇧⌘L or unassigned (got "${browserShortcut}")`);
+  assert.ok(["⇧⌘0", ""].includes(browserShortcut), `browser-level shortcut is ⇧⌘0 or unassigned (got "${browserShortcut}")`);
   const p = await open(`${origin}/player?src=/tone.wav`);
-  await p.page.keyboard.press("Meta+Shift+KeyL");
+  await p.page.keyboard.press("Meta+Shift+Digit0");
   assert.equal(await until(async () => (await dialog(p.page)) === "ready", 3000), true, "page shortcut opens");
-  await p.page.keyboard.press("Meta+Shift+KeyL");
+  await p.page.keyboard.press("Meta+Shift+Digit0");
   assert.equal(await until(async () => (await dialog(p.page)) === "closed", 1000), true, "and closes");
 
   // Held down: macOS repeats the keys about every 35 ms after half a second. The dialog stays; a new press closes it.
   const keys = await ctx.newCDPSession(p.page);
   const key = (type, autoRepeat = false) =>
-    keys.send("Input.dispatchKeyEvent", { type, modifiers: 4 | 8, key: "L", code: "KeyL", windowsVirtualKeyCode: 76, autoRepeat });
+    keys.send("Input.dispatchKeyEvent", { type, modifiers: 4 | 8, key: ")", code: "Digit0", windowsVirtualKeyCode: 48, autoRepeat });
   await key("rawKeyDown");
   await wait(450);
   for (let i = 0; i < 15; i++) { await key("rawKeyDown", true); await wait(35); }

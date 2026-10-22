@@ -607,18 +607,18 @@ test("boosting loud audio makes it clearly louder without crackling", async () =
   await page.close();
 });
 
-test("the shortcut (Command+Shift+L by default) opens and closes the dialog on the page; a new one can be recorded", async () => {
+test("the shortcut (Command+Shift+0 by default) opens and closes the dialog on the page; a new one can be recorded", async () => {
   const { page, tabId } = await openTestPage();
-  await page.keyboard.press("Meta+Shift+KeyL");
+  await page.keyboard.press("Meta+Shift+Digit0");
   assert.equal(await until(() => dialogReady(page), 2000), true, "default shortcut opens");
-  await page.keyboard.press("Meta+Shift+KeyL");
+  await page.keyboard.press("Meta+Shift+Digit0");
   assert.equal(await until(async () => !(await dialogOpen(page)), 1000), true, "and closes");
 
   // Record Ctrl+Shift+K in the panel (the toolbar popup shows the same panel without a shadow root).
   const popup = await context.newPage();
   await popup.addInitScript(([tabId, url]) => { chrome.tabs.query = async () => [{ id: tabId, url }]; }, [tabId, page.url()]);
   await popup.goto(ext.url());
-  await popup.locator(".shortcutBtn", { hasText: "⇧⌘L" }).waitFor();
+  await popup.locator(".shortcutBtn", { hasText: "⇧⌘0" }).waitFor();
   await popup.click(".shortcutBtn");
   await popup.locator(".shortcutBtn", { hasText: "press keys" }).waitFor();
   await popup.keyboard.press("Control+Shift+KeyK");
@@ -627,7 +627,7 @@ test("the shortcut (Command+Shift+L by default) opens and closes the dialog on t
   await settle();
 
   await page.bringToFront();
-  await page.keyboard.press("Meta+Shift+KeyL");
+  await page.keyboard.press("Meta+Shift+Digit0");
   await wait(400);
   assert.equal(await dialogOpen(page), false, "the old shortcut no longer opens it");
   await page.keyboard.press("Control+Shift+KeyK");
@@ -650,7 +650,7 @@ test("the shortcut (Command+Shift+L by default) opens and closes the dialog on t
   await page.keyboard.press("Escape");
   await until(async () => !(await dialogOpen(page)), 1000);
 
-  await send({ type: "setSettings", shortcut: { code: "KeyL", alt: false, ctrl: false, meta: true, shift: true } });
+  await send({ type: "setSettings", shortcut: { code: "Digit0", alt: false, ctrl: false, meta: true, shift: true } });
   await page.close();
 });
 
@@ -860,5 +860,17 @@ test("all 20 volume segments are the same width, with a gap marking 100%", async
     return [o.getBoundingClientRect(), c.getBoundingClientRect(), segs[0].getBoundingClientRect(), segs[19].getBoundingClientRect()];
   });
   assert.ok(Math.abs((first.left - open.right) - (close.left - last.right)) < 1 && first.left - open.right < 7, "brackets hug the segments");
+  await popup.close();
+});
+
+test("the name links to the project on GitHub, the version to its releases", async () => {
+  const popup = await context.newPage();
+  await popup.addInitScript(() => { chrome.tabs.query = async () => [{ id: 1, url: "https://example.com/" }]; });
+  await popup.goto(ext.url());
+  await popup.locator(".percent").waitFor();
+  assert.equal(await popup.getAttribute(".brand", "href"), "https://github.com/grumpitect/nerdfader");
+  assert.equal(await popup.getAttribute(".brand", "target"), "_blank");
+  assert.equal(await popup.getAttribute(".version", "href"), "https://github.com/grumpitect/nerdfader/releases");
+  assert.equal(await popup.evaluate(() => document.querySelector(".brand").tabIndex), -1, "not focusable, like the rest");
   await popup.close();
 });

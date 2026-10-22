@@ -30,7 +30,8 @@ Made for the [Nerdative](https://www.youtube.com/@nerdative) channel on YouTube,
 - **all_tabs.** Turn it on and one slider sets every tab, including ones you open later. Turn it off and every
   tab goes back to the volume it had before.
 - **Badge.** The toolbar icon shows the tab's volume when it isn't 100%.
-- **Shortcut.** **⌘⇧L** (Ctrl+Shift+L elsewhere) opens and closes the dialog. Record your own in the dialog (click
+- **Shortcut.** **⌘⇧0** (Ctrl+Shift+9 on Windows and Linux, where Windows often keeps Ctrl+Shift+0 for switching
+  keyboard layouts) opens and closes the dialog. Record your own in the dialog (click
   the shortcut, press the keys; Delete removes it): it works on any page and inside embedded players. The browser's
   own shortcut also works from the address bar; change it at `arc://extensions/shortcuts` (the dialog links there).
   If the browser already uses that key itself, it leaves the browser-level shortcut unassigned; pick another there.
@@ -47,7 +48,7 @@ Made for the [Nerdative](https://www.youtube.com/@nerdative) channel on YouTube,
   the dialog works too. The dialog keeps the keyboard itself, so no control inside it takes focus or shows a focus
   ring (Tab doesn't step through it).
 - **Four-finger gestures?** macOS keeps three- and four-finger trackpad gestures to itself; web pages and extensions
-  never see them. To open Nerdfader with one, map the gesture to ⌘⇧L in a tool like
+  never see them. To open Nerdfader with one, map the gesture to ⌘⇧0 in a tool like
   [BetterTouchTool](https://folivora.ai).
 - **The site doesn't notice.** YouTube's own volume slider keeps working and keeps showing its own value;
   Nerdfader scales whatever the site plays.

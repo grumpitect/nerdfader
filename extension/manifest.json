@@ -61,8 +61,8 @@
   "commands": {
     "_execute_action": {
       "suggested_key": {
-        "default": "Ctrl+Shift+L",
-        "mac": "Command+Shift+L"
+        "default": "Ctrl+Shift+9",
+        "mac": "Command+Shift+0"
       },
       "description": "Open Nerdfader"
     }

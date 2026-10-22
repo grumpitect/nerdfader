@@ -24,17 +24,18 @@ const clamp = (p) => Math.round(Math.min(MAX, Math.max(0, Number(p) || 0)));
 const toPercent = (pos) => (pos <= 100 ? pos : 100 + (pos - 100) * 5);
 const toPos = (p) => (p <= 100 ? p : 100 + (p - 100) / 5);
 
-// The in-page shortcut (content/input.js), stored as the key's code and modifiers: Command + Shift + L on a Mac,
-// Ctrl + Shift + L elsewhere, the same as the browser-level shortcut in manifest.json. Scrolling changes the volume
+// The in-page shortcut (content/input.js), stored as the key's code and modifiers: Command + Shift + 0 on a Mac (no
+// clash with macOS, Chrome or Arc), Ctrl + Shift + 9 elsewhere (Windows often keeps Ctrl + Shift + 0 for switching
+// keyboard layouts), the same as the browser-level shortcut in manifest.json. Scrolling changes the volume
 // with Command (Windows key elsewhere) held by default. Only defaults: a choice the user made is kept.
 async function settings() {
   const mac = (await chrome.runtime.getPlatformInfo()).os === "mac";
-  const defaultShortcut = { code: "KeyL", shift: true, meta: mac, ctrl: !mac, alt: false };
+  const defaultShortcut = { code: mac ? "Digit0" : "Digit9", shift: true, meta: mac, ctrl: !mac, alt: false };
   const { shortcut = defaultShortcut, altScroll = true, scrollKey = "meta" } =
     await chrome.storage.local.get(["shortcut", "altScroll", "scrollKey"]);
   return { shortcut, altScroll, scrollKey };
 }
-// The browser-level shortcut as Chrome shows it (for example "⇧⌘L"), or "" when the user removed it.
+// The browser-level shortcut as Chrome shows it (for example "⇧⌘0"), or "" when the user removed it.
 async function browserShortcut() {
   const commands = await chrome.commands.getAll();
   return commands.find((c) => c.name === "_execute_action")?.shortcut ?? "";
