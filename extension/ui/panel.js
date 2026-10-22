@@ -99,7 +99,7 @@ globalThis.NerdfaderPanel = (() => {
 .nf .hint { color: var(--muted); font-size: 12px; margin: 4px 0 8px 18px; }
 
 .nf .offer { margin-top: 10px; padding: 10px; border: 1px dashed var(--pink); border-radius: 8px; font-size: 12px; }
-.nf .offer[hidden] { display: none; }
+.nf [hidden] { display: none !important; }
 .nf .offer .buttons { display: flex; gap: 8px; margin: 8px 0; }
 .nf .offer .hint { margin: 0; }
 
@@ -181,8 +181,19 @@ globalThis.NerdfaderPanel = (() => {
     // A quick read first so the panel shows the right values straight away. In the toolbar popup, opening it is
     // also what lets the browser capture this tab, so a paused capture mode starts again (the dialog's icon click
     // already did that in the background).
-    let state = await call("state");
-    if (!close) call("opened").then((reply) => { if (reply && !reply.error && !busy) { state = reply; render(); } });
+    const valid = (reply) => reply && !reply.error && reply.override;
+    let state = await call("state").catch(() => null);
+    if (!valid(state)) {   // the background may be restarting, for example right after an update
+      await new Promise((r) => setTimeout(r, 300));
+      state = await call("state").catch(() => null);
+    }
+    if (!valid(state)) {
+      $("target").textContent = "Nerdfader was just updated";
+      $("note").textContent = "reload this page, then try again";
+      for (const el of root.querySelectorAll(".vol, .row button, .rule, .toggle, .hint")) el.hidden = true;
+      return { destroy() {} };
+    }
+    if (!close) call("opened").then((reply) => { if (valid(reply) && !busy) { state = reply; render(); } });
 
     // One request in flight at a time; while dragging, only the latest value is sent next.
     let pending = null, busy = false, changedAt = 0;
@@ -194,7 +205,7 @@ globalThis.NerdfaderPanel = (() => {
       while (pending) {
         const next = pending; pending = null;
         const reply = await call(next.type, next.extra);
-        if (!pending && reply && !reply.error) { state = reply; render(); }
+        if (!pending && valid(reply)) { state = reply; render(); }
       }
       busy = false;
     }
@@ -203,7 +214,7 @@ globalThis.NerdfaderPanel = (() => {
     const poll = setInterval(async () => {
       if (busy || Date.now() - changedAt < 800) return;
       const reply = await call("state").catch(() => null);
-      if (reply && !reply.error && !busy && Date.now() - changedAt >= 800) { state = reply; render(); }
+      if (valid(reply) && !busy && Date.now() - changedAt >= 800) { state = reply; render(); }
     }, 500);
 
     const current = () => (state.override.on ? state.override.percent : state.tab);

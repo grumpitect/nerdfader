@@ -540,3 +540,18 @@ test("version 1.0's page script left in an open tab doesn't stop the new one", a
   near(realVolume[1], 0.8, "page still sees its own volume");
   await plain.close();
 });
+
+test("the panel explains itself instead of breaking when the background doesn't answer", async () => {
+  const popup = await context.newPage();
+  await popup.addInitScript(() => {
+    chrome.tabs.query = async () => [{ id: 1, url: "https://example.com/" }];
+    chrome.runtime.sendMessage = async () => undefined;   // like an outdated background after an update
+  });
+  const errors = [];
+  popup.on("pageerror", (e) => errors.push(e.message));
+  await popup.goto(ext.url());
+  await popup.locator(".target", { hasText: "Nerdfader was just updated" }).waitFor();
+  assert.equal(await popup.locator(".slider").isVisible(), false);
+  assert.deepEqual(errors, []);
+  await popup.close();
+});
