@@ -566,7 +566,7 @@ test("version 1.0's page script left in an open tab doesn't stop the new one", a
     window.dispatchEvent(new CustomEvent("nerdfader:level", { detail: 0.125 }));   // 1.0 had this tab at 50%
     new Function(now)();
     a.volume = 0.8;
-    window.dispatchEvent(new CustomEvent("nerdfader2:level", { detail: 0.125 }));
+    window.dispatchEvent(new CustomEvent("nerdfader3:level", { detail: 0.125 }));
     return [native.get.call(a), a.volume];
   }, [old, now]);
   near(realVolume[0], 0.8 * 0.125, "scaled once, by the new copy");

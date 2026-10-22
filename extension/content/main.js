@@ -6,13 +6,14 @@
 //   instead of crackling. Elements the browser won't let Web Audio hear (DRM, media from another site without
 //   CORS) are left alone, and the frame reports why so the extension can offer capture mode instead.
 // - Web Audio: connections to an AudioContext's destination go through one hidden gain stage per context.
-// bridge.js (the extension's isolated world) sends the level as a "nerdfader2:level" event on window, and passes
-// this frame's "nerdfader2:status" (why it can't boost, or "") back to the extension.
+// bridge.js (the extension's isolated world) sends the level as a "nerdfader3:level" event on window, and passes
+// this frame's "nerdfader3:status" (why it can't boost, or "") back to the extension.
 //
 // Updating the extension leaves the old copy of this script running in open tabs, cut off from the extension. The
 // new copy takes over: the old one undoes its patches and hands over what it was tracking (elements already routed
 // through Web Audio can't be routed a second time). Version 1.0 can't hand over, so it is set back to 100% (its
-// own event, which nothing else sends any more) and left in place doing nothing.
+// own event, which nothing else sends any more) and left in place doing nothing. The events are versioned
+// ("nerdfader3:") so cut-off copies of bridge.js from older builds, which threw when they heard one, never do.
 (() => {
   const KEY = Symbol.for("nerdfader");
   const previous = window[KEY]?.retire?.();
@@ -166,7 +167,7 @@
     });
     if (status === lastStatus) return;
     lastStatus = status;
-    window.dispatchEvent(new CustomEvent("nerdfader2:status", { detail: status }));
+    window.dispatchEvent(new CustomEvent("nerdfader3:status", { detail: status }));
   }
 
   // Elements that autoplay or start from the browser's own controls never call play() from script.
@@ -231,11 +232,11 @@
     const n = Number(e.detail);
     if (n >= 0 && n <= 6) setLevel(n);
   };
-  window.addEventListener("nerdfader2:level", onLevel);
+  window.addEventListener("nerdfader3:level", onLevel);
 
   // Called by a newer copy of this script: undo everything here and hand over the state.
   const retire = () => {
-    window.removeEventListener("nerdfader2:level", onLevel);
+    window.removeEventListener("nerdfader3:level", onLevel);
     for (const type of mediaEvents) document.removeEventListener(type, onMedia, true);
     removeEventListener("pointerdown", wake, true);
     removeEventListener("keydown", wake, true);
@@ -248,5 +249,5 @@
     return { pageVolume, elements, routed, encrypted, boostCtx, boostStage, stages, contexts };
   };
   Object.defineProperty(window, KEY, { value: { retire }, configurable: true });
-  window.dispatchEvent(new Event("nerdfader2:ready"));
+  window.dispatchEvent(new Event("nerdfader3:ready"));
 })();

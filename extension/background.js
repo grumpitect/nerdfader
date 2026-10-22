@@ -341,32 +341,60 @@ chrome.tabs.onReplaced.addListener(async (added, removed) => {
 
 // Loaded from a folder (Load unpacked: installs from GitHub, and development), the extension notices when its files on
 // disk change (an update copied in) and reloads itself, so the whole extension runs the new version together instead
-// of new dialog files talking to an old background until someone clicks the reload arrow. The fingerprint of the
-// files is stored when this version starts (onInstalled, which also runs on reloads); open tabs are taken over by the
-// new version's scripts.
+// of new dialog files talking to an old background until someone clicks the reload arrow. Open tabs are taken over by
+// the new version's scripts.
+//
+// The fingerprint of the running version lives in storage.session, which the browser empties whenever the extension
+// is (re)loaded: an empty one means "just loaded", so the files on disk right now are the ones running. (It used to be
+// saved in onInstalled; Arc then reloaded over and over, as if it doesn't send onInstalled for a self-reload.)
+// The same "just loaded" moment attaches the new scripts to the tabs already open. As a last guard, three self-reloads
+// within ten minutes stop it. The last few loads are kept in storage.local ("loads") to see what a browser did.
 const WATCHED = [
   "manifest.json", "background.js", "content/main.js", "content/bridge.js", "content/input.js",
   "ui/panel.js", "ui/overlay.js", "popup/popup.html", "popup/popup.js", "offscreen/offscreen.js",
 ];
+// null when any file couldn't be read: that means "can't tell", never "changed".
 async function filesFingerprint() {
   const texts = await Promise.all(WATCHED.map((f) =>
-    fetch(chrome.runtime.getURL(f), { cache: "no-store" }).then((r) => (r.ok ? r.text() : ""), () => "")));
+    fetch(chrome.runtime.getURL(f), { cache: "no-store" }).then((r) => (r.ok ? r.text() : null), () => null)));
+  if (texts.includes(null)) return null;
   const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(texts.join("\0")));
   return [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, "0")).join("");
 }
-// Checks wait 3 s after this background starts: after a reload, onInstalled is still saving the new fingerprint, and
-// comparing against the previous version's would reload again and again.
-const startedAt = Date.now();
+let noting = Promise.resolve();
+function noteLoad(entry) {
+  noting = noting.then(async () => {
+    const { loads = [] } = await chrome.storage.local.get("loads");
+    await chrome.storage.local.set({ loads: [...loads, { at: new Date().toISOString(), ...entry }].slice(-12) });
+  }).catch(() => {});
+  return noting;
+}
+const running = (async () => {
+  const { runningFingerprint } = await chrome.storage.session.get("runningFingerprint");
+  if (runningFingerprint) return runningFingerprint;
+  // Just loaded (installed, updated, reloaded, or the browser started): take over the tabs that are already open.
+  let now = await filesFingerprint();
+  for (let i = 0; !now && i < 5; i++) { await new Promise((r) => setTimeout(r, 500)); now = await filesFingerprint(); }
+  if (now) await chrome.storage.session.set({ runningFingerprint: now });
+  noteLoad({ fresh: true, version: chrome.runtime.getManifest().version, files: now?.slice(0, 12) ?? "unreadable" });
+  attachToOpenTabs();
+  return now;
+})().catch(() => null);
 let checking = null;   // checks that overlap share one
 function reloadIfFilesChanged() {
-  if (Date.now() - startedAt < 3000) return;
   checking ??= (async () => {
-    if ((await chrome.management.getSelf()).installType !== "development") return;
-    const { filesFingerprint: running } = await chrome.storage.local.get("filesFingerprint");
-    if (running && running !== (await filesFingerprint())) chrome.runtime.reload();
+    const was = await running;
+    if (!was || (await chrome.management.getSelf()).installType !== "development") return;
+    const disk = await filesFingerprint();
+    if (!disk || was === disk) return;
+    const { selfReloads = [] } = await chrome.storage.local.get("selfReloads");
+    const recent = selfReloads.filter((t) => Date.now() - t < 10 * 60_000);
+    if (recent.length >= 3) return;   // looping somehow: stop
+    await chrome.storage.local.set({ selfReloads: [...recent, Date.now()] });
+    await noteLoad({ selfReload: true, from: was.slice(0, 12), to: disk.slice(0, 12) });
+    chrome.runtime.reload();
   })().catch(() => {}).finally(() => (checking = null));
 }
-setTimeout(reloadIfFilesChanged, 3500);
 chrome.tabs.onActivated.addListener(() => reloadIfFilesChanged());
 
 function badgeColors() {
@@ -374,10 +402,9 @@ function badgeColors() {
   chrome.action.setBadgeTextColor?.({ color: "#ffffff" });
 }
 
-chrome.runtime.onInstalled.addListener(async () => {
-  badgeColors();
-  chrome.storage.local.set({ filesFingerprint: await filesFingerprint() });
-  // Content scripts only start in pages loaded after install, so add them to the tabs already open.
+// Content scripts only start in pages loaded after the extension, so add them to the tabs already open. Safe to run
+// on a page that has them already: each script takes over from, or steps aside for, an earlier copy.
+async function attachToOpenTabs() {
   for (const tab of await chrome.tabs.query({ url: ["http://*/*", "https://*/*", "file:///*"] })) {
     const target = { tabId: tab.id, allFrames: true };
     chrome.scripting
@@ -386,6 +413,11 @@ chrome.runtime.onInstalled.addListener(async () => {
       .catch(() => {});   // pages the browser protects (the Web Store, other extensions)
   }
   reconcileAll();
+}
+
+chrome.runtime.onInstalled.addListener(async (details) => {
+  badgeColors();
+  noteLoad({ installed: details.reason });
 });
 
 chrome.runtime.onStartup.addListener(badgeColors);

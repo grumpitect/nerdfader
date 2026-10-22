@@ -10,19 +10,19 @@
   window.__nerdfaderBridge = connected;
 
   let level = null;
-  const send = () => level !== null && window.dispatchEvent(new CustomEvent("nerdfader2:level", { detail: level }));
+  const send = () => level !== null && window.dispatchEvent(new CustomEvent("nerdfader3:level", { detail: level }));
   const onStatus = (e) => {
     if (!connected()) return shutDown();
     chrome.runtime.sendMessage({ type: "status", status: String(e.detail ?? "") }).catch(() => {});
   };
   function shutDown() {
-    window.removeEventListener("nerdfader2:ready", send);
-    window.removeEventListener("nerdfader2:status", onStatus);
+    window.removeEventListener("nerdfader3:ready", send);
+    window.removeEventListener("nerdfader3:status", onStatus);
   }
 
   // main.js may start after this script (e.g. when both are injected into an open tab), so resend when it is ready.
-  window.addEventListener("nerdfader2:ready", send);
-  window.addEventListener("nerdfader2:status", onStatus);
+  window.addEventListener("nerdfader3:ready", send);
+  window.addEventListener("nerdfader3:status", onStatus);
   chrome.runtime.onMessage.addListener((msg) => {
     if (msg?.type === "level") { level = msg.gain; send(); }
   });

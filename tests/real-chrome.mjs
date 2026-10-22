@@ -234,6 +234,24 @@ test("updating from 1.0 over open tabs: no errors, and those tabs work with the 
   await yt.page.close();
 });
 
+test("updating from the 15:36 build Jay had in Arc over a playing tab: no errors on play and pause", async () => {
+  await install("12383df");   // its bridge.js threw when cut off and the page reported status
+  const player = await open(`${origin}/player?src=${other}/tone.wav`);
+  await call({ type: "setTab", tabId: player.tabId, percent: 300 });   // makes the page report "cross-origin"
+  await wait(500);
+  await clearErrors();
+  await install("working tree");
+  await call({ type: "setTab", tabId: player.tabId, percent: 300 });
+  for (let i = 0; i < 3; i++) {
+    await player.page.evaluate(async () => { const a = document.getElementById("a"); a.pause(); await new Promise((r) => setTimeout(r, 200)); await a.play(); });
+    await wait(300);
+  }
+  assert.equal((await state(player.tabId)).status, "cross-origin", "the new version hears the page");
+  assert.deepEqual(await errors(), [], "the old cut-off copies stay quiet");
+  await call({ type: "setTab", tabId: player.tabId, percent: 100 });
+  await player.page.close();
+});
+
 test("reloading the extension while tabs play: no errors, tabs keep working", async () => {
   await install("working tree");
   const player = await open(`${origin}/player?src=${other}/tone.wav`);
@@ -271,8 +289,16 @@ test("copying new files into the folder makes the extension reload itself once, 
   await other.goto(`${origin}/player?another=1`);   // any page load lets the extension notice
   assert.equal(await until(async () => (await marker()) === null, 8000), true, "reloaded by itself");
   await bg(() => { self.__marker = "new"; });
-  await wait(6000);
+  for (let i = 0; i < 4; i++) {   // page loads and tab switches after the update must not reload it again
+    const extra = await ctx.newPage();
+    await extra.goto(`${origin}/player?more=${i}`);
+    await p.page.bringToFront();
+    await wait(1000);
+    await extra.close();
+  }
   assert.equal(await marker(), "new", "and only once (no reload loop)");
+  const loads = await bg(async () => (await chrome.storage.local.get("loads")).loads);
+  assert.equal(loads.filter((l) => l.selfReload).length, 1, `one self-reload in the load history (${JSON.stringify(loads)})`);
 
   // The tab that was open keeps working with the new version.
   await call({ type: "setTab", tabId: p.tabId, percent: 40 });
@@ -333,7 +359,10 @@ test("the toolbar icon opens the dialog quickly, keys stay in it, and it closes 
 });
 
 test("shortcuts: the browser shortcut is registered, the page shortcut toggles the dialog, Option + scroll shows it for a moment", async () => {
-  assert.equal((await call({ type: "state", tabId: 0 })).browserShortcut, "⌥⇧V", "browser-level shortcut");
+  // Chrome assigns an extension's default browser shortcut on a fresh install only (not when an update adds it).
+  await cdp.send("Extensions.uninstall", { id });
+  await install("working tree");
+  assert.equal((await call({ type: "state", tabId: 0 })).browserShortcut, "⌥⇧V", "browser-level shortcut on a fresh install");
   const p = await open(`${origin}/player?src=/tone.wav`);
   await p.page.keyboard.press("Alt+Shift+KeyV");
   assert.equal(await until(async () => (await dialog(p.page)) === "ready", 3000), true, "page shortcut opens");
