@@ -28,8 +28,9 @@ const toPos = (p) => (p <= 100 ? p : 100 + (p - 100) / 5);
 // the same as the browser-level shortcut in manifest.json.
 const DEFAULT_SHORTCUT = { code: "KeyV", alt: true, shift: true, ctrl: false, meta: false };
 async function settings() {
-  const { shortcut = DEFAULT_SHORTCUT, altScroll = true } = await chrome.storage.local.get(["shortcut", "altScroll"]);
-  return { shortcut, altScroll };
+  const { shortcut = DEFAULT_SHORTCUT, altScroll = true, scrollKey = "alt" } =
+    await chrome.storage.local.get(["shortcut", "altScroll", "scrollKey"]);
+  return { shortcut, altScroll, scrollKey };
 }
 // The browser-level shortcut as Chrome shows it (for example "⌥⇧V"), or "" when the user removed it.
 async function browserShortcut() {
@@ -235,11 +236,13 @@ const handlers = {
     return next;
   },
   getSettings: () => settings(),
-  // From the panel: the in-page shortcut (null for none) and whether Option/Alt + scroll changes the volume.
+  // From the panel: the in-page shortcut (null for none), whether modifier + scroll changes the volume, and which
+  // modifier ("alt", "ctrl", "shift" or "meta").
   async setSettings(msg) {
     const change = {};
     if (msg.shortcut !== undefined) change.shortcut = msg.shortcut;
     if (typeof msg.altScroll === "boolean") change.altScroll = msg.altScroll;
+    if (["alt", "ctrl", "shift", "meta"].includes(msg.scrollKey)) change.scrollKey = msg.scrollKey;
     await chrome.storage.local.set(change);
     const next = await settings();
     for (const tab of await chrome.tabs.query({})) chrome.tabs.sendMessage(tab.id, { type: "settings", settings: next }).catch(() => {});

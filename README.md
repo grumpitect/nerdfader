@@ -19,7 +19,7 @@ Made for the [Nerdative](https://www.youtube.com/@nerdative) channel on YouTube,
 - **One slider per tab.** 0 to 600%. Each tab remembers its volume across reloads and navigation, until you close it.
 - **Boost without distortion.** Above 100% a limiter holds loud parts down instead of letting them crackle.
   600% is 6x (+15.6 dB), the same scale as other boosters.
-- **Capture mode, only when needed.** Netflix, Spotify and other DRM sites (and media served from another site
+- **Capture mode, only when needed.** (The ⓘ next to capture_mode in the dialog explains it in a few lines.) Netflix, Spotify and other DRM sites (and media served from another site
   without permission to process it) can't be boosted from inside the page. For those, Nerdfader offers capture
   mode: once for that tab, or always. It runs only while the tab plays sound: it stops a moment after the tab
   pauses or goes quiet, and starts again when it plays.
@@ -33,11 +33,14 @@ Made for the [Nerdative](https://www.youtube.com/@nerdative) channel on YouTube,
 - **Shortcut.** **⌥⇧V** (Alt+Shift+V elsewhere) opens and closes the dialog. Record your own in the dialog (click
   the shortcut, press the keys; Delete removes it): it works on any page and inside embedded players. The browser's
   own shortcut also works from the address bar; change it at `arc://extensions/shortcuts` (the dialog links there).
-- **⌥ + scroll.** Hold Option (Alt) and scroll anywhere, with a mouse wheel or two fingers on a trackpad, to change
-  the tab's volume: scrolling down turns it up (with macOS natural scrolling, that's a two-finger swipe up). The dialog shows for a moment and goes away 2 seconds after you stop; click or type in it and it
-  stays until you click away or press Esc. Turn it off with **option_scroll** in the dialog. On a Mac this works with
-  a trackpad; macOS browsers don't pass Option + mouse-wheel scrolling to pages at all, so with a mouse use the
-  shortcut instead.
+- **Modifier + scroll.** Hold Option (Alt) and scroll anywhere, with a mouse wheel or two fingers on a trackpad, to
+  change the tab's volume: scrolling down turns it up (with macOS natural scrolling, that's a two-finger swipe up).
+  The dialog shows for a moment and follows along while you keep scrolling; it goes away 2 seconds after you stop.
+  Click or type in it and it stays until you click away or press Esc. Pick the key in **scroll_volume**: ⌥ Option,
+  ⌃ Control, ⇧ Shift or ⌘ Command (or turn it off). On a Mac, Option works with a trackpad only (macOS doesn't
+  pass Option + mouse wheel to pages); with a mouse, pick another key. A trackpad pinch never counts as Control +
+  scroll. The page doesn't rubber-band while the dialog is up, so a hard swipe at the top or bottom of a page stays
+  with the dialog.
 - **Keyboard and mouse wheel in the dialog.** ←/→ change by 5% (25% above 100%; hold Shift for finer steps), **0**
   to **9** jump to 0 to 90%, **r** resets, **c** takes up the capture-mode offer, **Esc** closes, and scrolling over
   the dialog works too. The dialog keeps the keyboard itself, so no control inside it takes focus or shows a focus

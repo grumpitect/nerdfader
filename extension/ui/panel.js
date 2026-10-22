@@ -54,11 +54,11 @@ globalThis.NerdfaderPanel = (() => {
 .nf .percent { width: 4ch; text-align: right; font-weight: 700; }
 
 .nf .bar { position: relative; flex: 1; display: flex; align-items: center; gap: 4px; color: var(--muted); }
-.nf .segments { flex: 1; display: grid; grid-template-columns: repeat(20, 1fr); gap: 2px; height: 16px; }
+.nf .segments { flex: 1; display: grid; grid-template-columns: repeat(10, 1fr) 1px repeat(10, 1fr); gap: 2px; height: 16px; }
 .nf .segments i { border-radius: 2px; background: var(--off); }
 .nf .segments i.on { background: var(--amber); }
 .nf .segments i.boost.on { background: var(--pink); }
-.nf .segments i:nth-child(10) { margin-right: 3px; }   /* a small gap marks 100% */
+/* An empty column between the 10th and 11th segments marks 100%, so every segment keeps the same width. */
 
 /* The real slider sits invisibly on top of the segments: mouse, keyboard and screen readers all use it. */
 .nf .slider { position: absolute; inset: -6px 0; width: 100%; height: calc(100% + 12px); margin: 0; opacity: 0; cursor: pointer; }
@@ -100,6 +100,18 @@ globalThis.NerdfaderPanel = (() => {
 .nf .hint { color: var(--muted); font-size: 12px; margin: 4px 0 8px 18px; }
 .nf .hint a { color: var(--cyan); cursor: pointer; text-decoration: none; }
 .nf .hint a:hover { text-decoration: underline; }
+.nf .infoBtn {
+  font: italic 700 10px/1 Georgia, serif; width: 15px; height: 15px; padding: 0; margin-left: 6px; border-radius: 50%;
+  vertical-align: 1px; color: var(--muted); border-color: var(--muted);
+}
+.nf .infoBtn.open, .nf .infoBtn:hover { color: var(--cyan); border-color: var(--cyan); }
+.nf .info { margin: 2px 0 8px 18px; padding: 8px 10px; border-left: 2px solid var(--cyan); font-size: 12px; color: var(--text); }
+.nf .info p + p { margin-top: 6px; }
+.nf .info b { color: var(--cyan); font-weight: 700; }
+.nf .picks { display: flex; gap: 6px; margin: -2px 0 8px 18px; }
+.nf .pick { min-width: 30px; padding: 2px 6px; color: var(--muted); border-color: var(--off); }
+.nf .pick.on { color: var(--pink); border-color: var(--pink); }
+.nf .picks.off { opacity: 0.4; }
 .nf .setting { display: flex; align-items: center; gap: 8px; padding-left: 18px; }
 .nf .setting .name { flex: 1; }
 .nf .shortcutBtn { min-width: 64px; }
@@ -127,7 +139,7 @@ globalThis.NerdfaderPanel = (() => {
   <span class="label">vol</span>
   <div class="bar">
     <span class="bracket">[</span>
-    <div class="segments">${Array.from({ length: 20 }, (_, i) => `<i class="${i >= 10 ? "boost" : ""}"></i>`).join("")}</div>
+    <div class="segments">${Array.from({ length: 20 }, (_, i) => `${i === 10 ? "<span></span>" : ""}<i class="${i >= 10 ? "boost" : ""}"></i>`).join("")}</div>
     <span class="bracket">]</span>
     <input type="range" class="slider" min="0" max="200" step="1" aria-label="Volume">
   </div>
@@ -156,10 +168,17 @@ globalThis.NerdfaderPanel = (() => {
 <label class="toggle">
   <input type="checkbox" class="alwaysToggle">
   <span class="caret">&gt;</span>
-  <span class="name">capture_mode</span>
+  <span class="name">capture_mode <button class="infoBtn" title="What is capture mode?" aria-label="What is capture mode?">i</button></span>
   <span class="switch" aria-hidden="true"></span>
 </label>
 <div class="hint captureHint"></div>
+<div class="info captureInfo" hidden>
+  <p>Some sites won't let Nerdfader turn them up past 100%: Netflix, Spotify and other sites with protected video,
+  and players that load their media from another site. They still play, just not louder.</p>
+  <p>Capture mode gets around that: Nerdfader records the tab's sound and plays it back louder. While it's on, the
+  browser shows the tab as being shared, and it stops by itself when the tab goes quiet.</p>
+  <p><b>Off:</b> Nerdfader asks you on such a site. <b>On:</b> it just does it.</p>
+</div>
 <div class="rule"></div>
 <div class="setting">
   <span class="name">shortcut</span>
@@ -169,10 +188,13 @@ globalThis.NerdfaderPanel = (() => {
 <label class="toggle">
   <input type="checkbox" class="altScrollToggle">
   <span class="caret">&gt;</span>
-  <span class="name">option_scroll</span>
+  <span class="name">scroll_volume</span>
   <span class="switch" aria-hidden="true"></span>
 </label>
 <div class="hint altScrollHint"></div>
+<div class="picks">
+  <button class="pick" data-key="alt"></button><button class="pick" data-key="ctrl"></button><button class="pick" data-key="shift"></button><button class="pick" data-key="meta"></button>
+</div>
 <div class="rule"></div>
 <footer>
   <span class="keys">←/→ · 0 to 9 · r reset</span>
@@ -190,6 +212,13 @@ globalThis.NerdfaderPanel = (() => {
     if (mac) return (s.ctrl ? "⌃" : "") + (s.alt ? "⌥" : "") + (s.shift ? "⇧" : "") + (s.meta ? "⌘" : "") + key;
     return [s.ctrl && "Ctrl", s.alt && "Alt", s.shift && "Shift", s.meta && "Meta", key].filter(Boolean).join("+");
   }
+
+  const modifierNames = mac
+    ? { alt: "⌥", ctrl: "⌃", shift: "⇧", meta: "⌘" }
+    : { alt: "Alt", ctrl: "Ctrl", shift: "Shift", meta: "Win" };
+  const modifierWords = mac
+    ? { alt: "Option", ctrl: "Control", shift: "Shift", meta: "Command" }
+    : { alt: "Alt", ctrl: "Ctrl", shift: "Shift", meta: "Windows" };
 
   const reasons = {
     protected: "it plays protected (DRM) media",
@@ -306,7 +335,7 @@ globalThis.NerdfaderPanel = (() => {
       $("slider").value = toPos(p);
       $("slider").setAttribute("aria-valuetext", `${p}%`);
       $("percent").textContent = `${p}%`;
-      [...$("segments").children].forEach((seg, i) => seg.classList.toggle("on", toPos(p) > i * 10));
+      [...$("segments").querySelectorAll("i")].forEach((seg, i) => seg.classList.toggle("on", toPos(p) > i * 10));
       $("reset").disabled = p === DEFAULT;
 
       // What this tab is doing right now.
@@ -332,10 +361,10 @@ globalThis.NerdfaderPanel = (() => {
       $("overrideHint").textContent = all ? "every tab plays at this volume" : "set every tab at once";
       $("alwaysToggle").checked = state.captureAlways;
       $("captureHint").textContent = state.captureAlways
-        ? "used on sites that block boosting"
-        : "asks first on sites that block boosting";
+        ? "boosts sites stuck at 100% · automatically"
+        : "boosts sites stuck at 100% · asks first";
 
-      const settings = state.settings ?? { shortcut: null, altScroll: true };
+      const settings = state.settings ?? { shortcut: null, altScroll: true, scrollKey: "alt" };
       $("shortcutBtn").textContent = recording ? "press keys…" : shortcutLabel(settings.shortcut);
       $("shortcutBtn").classList.toggle("recording", recording);
       $("shortcutHint").innerHTML = "";
@@ -345,10 +374,17 @@ globalThis.NerdfaderPanel = (() => {
           ? [` · browser: ${state.browserShortcut || "none"} `, Object.assign(document.createElement("a"), { textContent: "change", className: "changeBrowser", tabIndex: -1 })]
           : []),
       );
+      const key = settings.scrollKey ?? "alt";
       $("altScrollToggle").checked = settings.altScroll;
       $("altScrollHint").textContent = settings.altScroll
-        ? `${mac ? "⌥" : "Alt"} + scroll on any page changes the volume and shows this for a moment`
-        : `${mac ? "⌥" : "Alt"} + scroll does nothing special`;
+        ? `hold ${modifierWords[key]} and scroll on any page` + (mac && key === "alt" ? " · trackpad only" : "")
+        : "off";
+      $("picks").classList.toggle("off", !settings.altScroll);
+      for (const b of root.querySelectorAll(".pick")) {
+        b.textContent = modifierNames[b.dataset.key];
+        b.title = `hold ${modifierWords[b.dataset.key]} to change the volume by scrolling`;
+        b.classList.toggle("on", b.dataset.key === key);
+      }
     }
 
     $("slider").addEventListener("input", (e) => setPercent(toPercent(Number(e.target.value))));
@@ -380,6 +416,15 @@ globalThis.NerdfaderPanel = (() => {
     $("shortcutHint").addEventListener("click", (e) => {
       if (e.target.classList.contains("changeBrowser")) call("openShortcuts");
     });
+    $("infoBtn").addEventListener("click", (e) => {
+      e.preventDefault();   // inside the switch's label: open the explanation, don't flip the switch
+      e.stopPropagation();
+      $("captureInfo").hidden = !$("captureInfo").hidden;
+      $("infoBtn").classList.toggle("open", !$("captureInfo").hidden);
+    });
+    for (const b of root.querySelectorAll(".pick")) {
+      b.addEventListener("click", () => saveSettings({ scrollKey: b.dataset.key, altScroll: true }));
+    }
     $("altScrollToggle").addEventListener("change", (e) => {
       saveSettings({ altScroll: e.target.checked });
       root.focus();
@@ -429,30 +474,38 @@ globalThis.NerdfaderPanel = (() => {
       e.preventDefault();
       setPercent(p);
     });
-    // Scrolling: one step (as an arrow key) per 100 px, and at least one per scroll after a 200 ms pause, so a mouse
-    // notch of any size counts and a trackpad swipe doesn't fly past (the same rule as Option + scroll on pages).
-    let carried = 0, lastStep = -Infinity;
+    // Scrolling in the toolbar popup (the in-page dialog's scrolling is counted by content/input.js, by the same rule):
+    // the first scroll of a gesture moves one step, then one per 100 px; scrolling down turns it up.
+    let carried = 0, lastWheel = -Infinity;
     function wheel(e) {
       if (!editable()) return;
       const raw = Math.abs(e.deltaY) >= Math.abs(e.deltaX) ? e.deltaY : e.deltaX;
       const delta = e.deltaMode === 1 ? raw * 40 : raw;
       if (!delta) return;
       e.preventDefault();
-      if (Math.sign(delta) !== Math.sign(carried)) carried = 0;
-      carried += delta;
-      let steps = Math.trunc(carried / 100);
-      if (steps) carried -= steps * 100;
-      else if (e.timeStamp - lastStep > 200) { steps = Math.sign(delta); carried = 0; }
-      if (!steps) return;
-      lastStep = e.timeStamp;
-      setPercent(toPercent(Math.min(200, Math.max(0, toPos(current()) + 5 * steps))));   // scrolling down is louder
+      let steps;
+      if (e.timeStamp - lastWheel > 250 || Math.sign(delta) !== Math.sign(carried || delta)) {
+        steps = Math.sign(delta);
+        carried = 0;
+      } else {
+        carried += delta;
+        steps = Math.trunc(carried / 100);
+        carried -= steps * 100;
+      }
+      lastWheel = e.timeStamp;
+      if (steps) setPercent(toPercent(Math.min(200, Math.max(0, toPos(current()) + 5 * steps))));
     }
-    // In the in-page dialog the backdrop passes every scroll on (see ui/overlay.js); the popup listens itself.
+    // Only the popup listens itself; see above.
     if (!close) root.addEventListener("wheel", wheel, { passive: false });
 
     render();
     root.focus();
-    return { destroy: () => clearInterval(poll), wheel };
+    // Called when something else changed the volume (scrolling on the page): show it at once.
+    async function refresh() {
+      const reply = await call("state");
+      if (valid(reply) && !busy) { state = reply; render(); }
+    }
+    return { destroy: () => clearInterval(poll), wheel, refresh };
   }
 
   return { css, mount };

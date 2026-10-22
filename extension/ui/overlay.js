@@ -4,7 +4,7 @@
 //
 // Option/Alt + scroll opens it "for a moment" instead (the background sets globalThis.__nerdfaderOpen first): it goes
 // away 2 seconds after the last scroll, unless the user clicks or types in it, which keeps it until they click away
-// or press Esc. While it is up, scrolling anywhere over it changes the volume.
+// or press Esc. While it is up, scrolling anywhere over it changes the volume (counted by content/input.js).
 (() => {
   const TAG = "nerdfader-dialog";
   const request = globalThis.__nerdfaderOpen ?? {};
@@ -66,6 +66,12 @@
   const refit = () => host.parentNode !== parent() && parent().append(host);
   document.addEventListener("fullscreenchange", refit);
 
+  // No rubber-band bounce of the page while the dialog is up: a hard swipe at the top or bottom of a page would bounce
+  // it, and the bounce takes the rest of the gesture away from the dialog. Put back as it was on close.
+  const roots = [document.documentElement, document.body].filter(Boolean);
+  const overscroll = roots.map((el) => [el.style.getPropertyValue("overscroll-behavior"), el.style.getPropertyPriority("overscroll-behavior")]);
+  for (const el of roots) el.style.setProperty("overscroll-behavior", "none", "important");
+
   // Keys typed in the dialog stay in the dialog (so a video player doesn't also seek or change its own volume).
   const swallow = (e) => { if (e.composedPath().includes(host)) e.stopPropagation(); };
   for (const type of ["keydown", "keyup", "keypress", "wheel"]) host.addEventListener(type, swallow);
@@ -78,6 +84,10 @@
     panel?.destroy();
     document.removeEventListener("fullscreenchange", refit);
     removeEventListener("pagehide", close);
+    roots.forEach((el, i) => {
+      if (overscroll[i][0]) el.style.setProperty("overscroll-behavior", ...overscroll[i]);
+      else el.style.removeProperty("overscroll-behavior");
+    });
     wrap.classList.add("closing");
     const done = () => { host.remove(); previousFocus?.focus?.({ preventScroll: true }); };
     matchMedia("(prefers-reduced-motion: reduce)").matches ? done() : setTimeout(done, 110);
@@ -94,14 +104,13 @@
     hideTimer = setTimeout(close, 2000);
   };
   const stay = () => { staying = true; clearTimeout(hideTimer); };
-  host.addEventListener("nerdfader-poke", poke);
+  // A poke comes with each volume step from scrolling: show the new value at once, and keep a "moment" dialog up.
+  host.addEventListener("nerdfader-poke", () => { panel?.refresh(); poke(); });
   dialog.addEventListener("pointerdown", stay);
   dialog.addEventListener("keydown", (e) => { if (e.key !== "Escape") stay(); });
-  backdrop.addEventListener("wheel", (e) => {
-    e.preventDefault();
-    panel?.wheel(e);
-    poke();
-  }, { passive: false });
+  // Scrolling over the dialog changes the volume; content/input.js counts it (one place for every scroll). This only
+  // keeps the page behind from scrolling if that script isn't there.
+  backdrop.addEventListener("wheel", (e) => e.preventDefault(), { passive: false });
 
   // Shown once the panel has its values, so it never appears half-filled.
   NerdfaderPanel.mount(dialog, { url: location.href, close }).then((p) => {

@@ -757,3 +757,98 @@ test("nothing in the panel takes focus or shows a focus ring; the panel keeps th
   await popup.close();
   await page.close();
 });
+
+test("a continuous swipe that opens the dialog keeps changing the volume, by distance, with no hiccup", async () => {
+  const { page, tabId } = await openTestPage();
+  await page.mouse.move(300, 300);
+  const cdp = await context.newCDPSession(page);
+  // 30 events of 20 CSS px (40 device px at this page's 2x scale), about 50 ms apart, Option held: 600 px, so one
+  // step to start and then one per 100 px.
+  for (let i = 0; i < 30; i++) {
+    await cdp.send("Input.dispatchMouseEvent", { type: "mouseWheel", x: 300, y: 300, deltaX: 0, deltaY: 40, modifiers: 1 });
+    await wait(16);
+  }
+  await wait(400);
+  const after = (await send({ type: "state", tabId })).tab;
+  assert.ok(after >= 225 && after <= 275, `about 6 steps up from 100% (got ${after}%)`);
+  assert.equal(await dialogReady(page), true, "the dialog is up");
+  // While it's up the page doesn't bounce (overscroll off), and closing puts the page back as it was.
+  assert.equal(await page.evaluate(() => getComputedStyle(document.documentElement).overscrollBehaviorY), "none");
+  await page.keyboard.press("Escape");
+  await until(async () => !(await dialogOpen(page)), 1000);
+  assert.equal(await page.evaluate(() => document.documentElement.style.overscrollBehavior), "");
+  await send({ type: "setTab", tabId, percent: 100 });
+  await page.close();
+});
+
+test("the scroll key can be changed; Control ignores trackpad pinches", async () => {
+  const { page, tabId } = await openTestPage();
+  await page.mouse.move(300, 300);
+  const state = async () => (await send({ type: "state", tabId })).tab;
+  const wheelWith = async (key) => {
+    await page.keyboard.down(key);
+    await page.mouse.wheel(0, 100);
+    await page.keyboard.up(key);
+    await wait(500);
+  };
+  const closeDialog = async () => { await page.keyboard.press("Escape"); await until(async () => !(await dialogOpen(page)), 1000); };
+
+  await send({ type: "setSettings", scrollKey: "ctrl" });
+  await settle();
+  await wheelWith("Alt");
+  assert.equal(await state(), 100, "Option no longer does it");
+  // A pinch: a wheel event with ctrlKey set while the Control key isn't held.
+  await page.evaluate(() => document.body.dispatchEvent(new WheelEvent("wheel", { deltaY: 100, ctrlKey: true, bubbles: true, cancelable: true })));
+  await wait(500);
+  assert.equal(await state(), 100, "a pinch doesn't change the volume");
+  await wheelWith("Control");
+  assert.equal(await until(async () => (await state()) === 125, 2000), true, "Control + scroll does");
+  await closeDialog();
+
+  await send({ type: "setSettings", scrollKey: "shift" });
+  await settle();
+  await wheelWith("Shift");
+  assert.equal(await until(async () => (await state()) === 150, 2000), true, "Shift + scroll does");
+  await closeDialog();
+
+  await send({ type: "setSettings", scrollKey: "alt" });
+  await send({ type: "setTab", tabId, percent: 100 });
+  await page.close();
+});
+
+test("capture mode's info button explains it without flipping the switch; the scroll key picker saves", async () => {
+  const { page, tabId } = await openTestPage();
+  const popup = await context.newPage();
+  await popup.addInitScript(([tabId, url]) => { chrome.tabs.query = async () => [{ id: tabId, url }]; }, [tabId, page.url()]);
+  await popup.goto(ext.url());
+  await popup.locator(".percent", { hasText: "100%" }).waitFor();
+  assert.equal(await popup.locator(".captureInfo").isVisible(), false);
+  await popup.click(".infoBtn");
+  assert.equal(await popup.locator(".captureInfo").isVisible(), true, "explanation shown");
+  assert.match(await popup.locator(".captureInfo").textContent(), /records the tab's sound/);
+  assert.equal(await popup.locator(".alwaysToggle").isChecked(), false, "switch untouched");
+  await popup.click(".infoBtn");
+  assert.equal(await popup.locator(".captureInfo").isVisible(), false, "and hidden again");
+  assert.match(await popup.locator(".captureHint").textContent(), /stuck at 100%/);
+
+  await popup.click('.pick[data-key="meta"]');
+  await popup.locator('.pick.on[data-key="meta"]').waitFor();
+  assert.equal((await send({ type: "state", tabId })).settings.scrollKey, "meta", "saved");
+  assert.match(await popup.locator(".altScrollHint").textContent(), /Command/);
+  await send({ type: "setSettings", scrollKey: "alt" });
+  await popup.close();
+  await page.close();
+});
+
+test("all 20 volume segments are the same width, with a gap marking 100%", async () => {
+  const popup = await context.newPage();
+  await popup.addInitScript(() => { chrome.tabs.query = async () => [{ id: 1, url: "https://example.com/" }]; });
+  await popup.goto(ext.url());
+  await popup.locator(".percent").waitFor();
+  const widths = await popup.evaluate(() => [...document.querySelectorAll(".segments i")].map((i) => Math.round(i.getBoundingClientRect().width * 10) / 10));
+  assert.equal(widths.length, 20);
+  assert.ok(Math.max(...widths) - Math.min(...widths) < 0.6, `equal widths: ${widths.join(", ")}`);
+  const [ten, eleven, nine] = await popup.evaluate(() => [10, 11, 9].map((n) => document.querySelectorAll(".segments i")[n - 1].getBoundingClientRect()));
+  assert.ok(eleven.left - ten.right > (ten.left - nine.right) + 0.5, "a wider gap between 100% and the boost half");
+  await popup.close();
+});
