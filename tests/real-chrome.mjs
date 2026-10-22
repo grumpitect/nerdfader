@@ -19,7 +19,7 @@ import { spawn, execSync } from "node:child_process";
 import { chromium } from "playwright";
 
 // A stuck site fails its own test instead of hanging the run.
-const test = (name, fn) => nodeTest(name, { timeout: 90_000 }, fn);
+const test = (name, opts, fn) => (fn ? nodeTest(name, { timeout: 90_000, ...opts }, fn) : nodeTest(name, { timeout: 90_000 }, opts));
 
 const ROOT = path.resolve(import.meta.dirname, "..");
 const CHROME = process.env.CHROME ?? "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome";
@@ -62,7 +62,8 @@ const files = {
     const q = new URLSearchParams(location.search);
     if (q.get("src")) {
       const a = document.createElement("audio");
-      a.id = "a"; a.loop = true; a.src = q.get("src"); document.body.append(a); a.play();
+      a.id = "a"; a.loop = true; a.muted = q.has("muted"); a.src = q.get("src"); document.body.append(a);
+      if (!q.has("paused")) a.play().catch((e) => (window.playError = String(e)));
     }</script>`],
   "/drm": ["text/html", `<!doctype html><title>drm</title><body><video id="a" width="320" loop></video>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/shaka-player/4.12.6/shaka-player.compiled.js"></script>
@@ -101,7 +102,10 @@ before(async () => {
   chrome = spawn(CHROME, [
     ...headless,
     `--user-data-dir=${profile}/profile`, `--remote-debugging-port=${port}`, "--enable-unsafe-extension-debugging",
-    "--no-first-run", "--no-default-browser-check", "--autoplay-policy=no-user-gesture-required",
+    "--no-first-run", "--no-default-browser-check",
+    // Pages may play sound without a click, which most tests need. STRICT_AUTOPLAY=1 keeps the browser's normal rule
+    // (sound and Web Audio only after a real interaction with the page) for the test that checks that.
+    ...(process.env.STRICT_AUTOPLAY ? [] : ["--autoplay-policy=no-user-gesture-required"]),
     // Otherwise Bluetooth headphones' media buttons (or macOS on their behalf) can pause the test players.
     "--disable-features=MediaSessionService",
     // No sound reaches the speakers; pages still play, count as playing sound, and can be captured.
@@ -507,6 +511,50 @@ test("protected (EME) media is detected, kept playing, and boosted through captu
   assert.ok(stats[p.tabId].peak > 0.0005, `capture hears the protected stream (${stats[p.tabId].peak})`);
   await call({ type: "setTab", tabId: p.tabId, percent: 100 });
   assert.deepEqual(await errors(), []);
+  await p.page.close();
+});
+
+// Runs a function in the page through the extension (not Playwright's page.evaluate, which counts as a click).
+let inPage;
+test("with the browser's normal autoplay rule, boosting and holding the scroll key before a click logs nothing", { skip: !process.env.STRICT_AUTOPLAY && "runs with STRICT_AUTOPLAY=1 (npm run test:real does)" }, async () => {
+  await install("working tree");
+  await clearErrors();
+  // Audio loaded but not started (as on a page you haven't clicked yet); Web Audio may not start before a click.
+  // Nothing here goes through Playwright's page.evaluate, which counts as a click.
+  const p = await open(`${origin}/player?src=/tone.wav&paused`);
+  inPage = (func) => bg(async ([tabId, src]) => {
+    const [r] = await chrome.scripting.executeScript({ target: { tabId }, world: "MAIN", func: (src) => (0, eval)(`(${src})()`), args: [src] });
+    return r.result;
+  }, [p.tabId, String(func)]);
+  await p.page.bringToFront();
+  await until(() => inPage(() => document.getElementById("a").readyState >= 2), 3000);
+  await call({ type: "setTab", tabId: p.tabId, percent: 300 });   // wants the boost stage
+  await wait(800);
+  assert.equal(await inPage(() => navigator.userActivation.hasBeenActive), false, "no click yet");
+  // Holding the scroll key and scrolling, pressing Esc and Shift: none of these count as a click.
+  await p.page.mouse.move(300, 300);
+  await p.page.keyboard.down("Meta");
+  await p.page.mouse.wheel(0, 100);
+  await p.page.keyboard.up("Meta");
+  await p.page.keyboard.press("Escape");
+  await p.page.keyboard.press("Shift");
+  await wait(800);
+  assert.deepEqual(await errors(), [], "no warnings about the AudioContext");
+  // A real click lets the boost start, still without warnings.
+  await p.page.mouse.click(20, 20);
+  assert.equal(await inPage(() => navigator.userActivation.hasBeenActive), true, "clicked");
+  await inPage(() => document.getElementById("a").play());
+  await clickIcon(p.page);   // lets the test measure the tab with tab capture
+  await until(async () => (await dialog(p.page)) === "ready");
+  await p.page.keyboard.press("Escape");
+  await call({ type: "setTab", tabId: p.tabId, percent: 100 });
+  await wait(400);
+  const base = await heard(p.tabId);
+  await call({ type: "setTab", tabId: p.tabId, percent: 300 });
+  await wait(400);
+  ratio(await heard(p.tabId), base, 3, "the boost works once the page was clicked");
+  assert.deepEqual(await errors(), []);
+  await call({ type: "setTab", tabId: p.tabId, percent: 100 });
   await p.page.close();
 });
 

@@ -126,7 +126,20 @@
 
   // The boost stage for elements, created the first time something needs boosting.
   let boostCtx = previous?.boostCtx ?? null, boostStage = previous?.boostStage ?? null, needsClick = false;
-  const wake = () => boostCtx && boostCtx.state !== "running" && boostCtx.resume();
+  // Browsers only let a page start Web Audio after a real interaction with it (a click, a normal key press; holding
+  // Command or Shift, or Esc, doesn't count), unless the page may already play sound by itself. Starting it earlier
+  // only gets a "not allowed to start" warning, so the boost stage waits for that.
+  const playingSound = () => {
+    let found = false;
+    each((el) => { found ||= !el.paused && !el.muted && pageVolume.get(el) > 0; });
+    return found;
+  };
+  const mayStart = () => (navigator.userActivation?.hasBeenActive ?? true) || playingSound();
+  const wake = () => {
+    if (!navigator.userActivation?.hasBeenActive) return;   // this key or click didn't count as interacting
+    if (!boostCtx) { if (level > 1) each(boost); report(); }
+    else if (boostCtx.state !== "running") boostCtx.resume();
+  };
   const check = () => {
     needsClick = boostCtx.state !== "running";
     if (!needsClick && level > 1) each(boost);
@@ -139,14 +152,14 @@
     boostCtx = new NativeAudioContext({ sampleRate: 48000 });
     boostStage = outputStage(boostCtx);
     boostStage.set(Math.max(level, 1), false);
-    // Browsers only start audio after the user has interacted with the page (or it may autoplay with sound).
-    // Until then, routing would mute the element, so wait for a click or key press in the page.
+    // Routing an element into a context that isn't running would mute it, so elements join once it runs.
     boostCtx.onstatechange = check;
     setTimeout(check, 300);
     return boostCtx;
   }
   function boost(el) {
     if (routed.has(el) || blocker(el) !== "") return;
+    if (!boostCtx && !mayStart()) { needsClick = true; return; }
     if (boostContext().state !== "running") return;
     try {
       connect.call(boostCtx.createMediaElementSource(el), boostStage.input);
@@ -182,6 +195,7 @@
   for (const type of mediaEvents) document.addEventListener(type, onMedia, true);
   addEventListener("pointerdown", wake, true);
   addEventListener("keydown", wake, true);
+  addEventListener("click", wake, true);
 
   // Web Audio made by the page
   const stages = previous?.stages ?? new WeakMap();   // AudioContext -> its output stage
@@ -240,6 +254,7 @@
     for (const type of mediaEvents) document.removeEventListener(type, onMedia, true);
     removeEventListener("pointerdown", wake, true);
     removeEventListener("keydown", wake, true);
+    removeEventListener("click", wake, true);
     if (Object.getOwnPropertyDescriptor(media, "volume").set === patchedVolume.set) Object.defineProperty(media, "volume", volume);
     if (media.play === patchedPlay) media.play = play;
     if (AudioNode.prototype.connect === patchedConnect) AudioNode.prototype.connect = connect;

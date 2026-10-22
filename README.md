@@ -139,7 +139,8 @@ npm run test:real:window   # just the browser-level shortcut, which needs a wind
 ```
 
 `test:real` starts Google Chrome with a throwaway profile and drives it over its debugging protocol, which can load
-the extension and click its toolbar icon for real. It installs 1.0.0 and updates it over open tabs, reloads it while
+the extension and click its toolbar icon for real. It runs twice: once letting pages play sound freely (most tests
+need that), and once with the browser's normal autoplay rule, to check nothing warns before you've clicked a page. It installs 1.0.0 and updates it over open tabs, reloads it while
 tabs play, opens the dialog, uses the shortcut and modifier + scroll, runs capture mode under Chrome's real "only
 after you clicked it on this tab" rule, plays a DRM (ClearKey) stream, and visits YouTube, Vimeo, Facebook and
 Twitch, failing on anything that shows up under Errors in chrome://extensions. Its audio output is off, so it's
