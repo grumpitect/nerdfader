@@ -24,18 +24,19 @@ const clamp = (p) => Math.round(Math.min(MAX, Math.max(0, Number(p) || 0)));
 const toPercent = (pos) => (pos <= 100 ? pos : 100 + (pos - 100) * 5);
 const toPos = (p) => (p <= 100 ? p : 100 + (p - 100) / 5);
 
-// The in-page shortcut (content/input.js), stored as the key's code and modifiers: Command + Shift + 0 on a Mac (no
-// clash with macOS, Chrome or Arc), Ctrl + Shift + 9 elsewhere (Windows often keeps Ctrl + Shift + 0 for switching
-// keyboard layouts), the same as the browser-level shortcut in manifest.json. Scrolling changes the volume
-// with Command (Windows key elsewhere) held by default. Only defaults: a choice the user made is kept.
+// The in-page shortcuts (content/input.js), stored as the key's code and modifiers. Command + Shift + 0 opens the
+// dialog (no clash with macOS, Chrome or Arc; Ctrl + Shift + 9 elsewhere, since Windows often keeps Ctrl + Shift + 0
+// for switching keyboard layouts), the same as the browser-level shortcut in manifest.json. Command + Shift + Minus
+// resets the tab to 100% (Ctrl off a Mac); browser-level shortcuts can't use -, so that one only has a page default.
+// Scrolling changes the volume with Command (Windows key elsewhere) held by default. Choices the user made are kept.
 async function settings() {
   const mac = (await chrome.runtime.getPlatformInfo()).os === "mac";
-  const defaultShortcut = { code: mac ? "Digit0" : "Digit9", shift: true, meta: mac, ctrl: !mac, alt: false };
-  const { shortcut = defaultShortcut, altScroll = true, scrollKey = "meta" } =
-    await chrome.storage.local.get(["shortcut", "altScroll", "scrollKey"]);
-  return { shortcut, altScroll, scrollKey };
+  const keys = (code) => ({ code, shift: true, meta: mac, ctrl: !mac, alt: false });
+  const { shortcut = keys(mac ? "Digit0" : "Digit9"), resetShortcut = keys("Minus"), altScroll = true, scrollKey = "meta" } =
+    await chrome.storage.local.get(["shortcut", "resetShortcut", "altScroll", "scrollKey"]);
+  return { shortcut, resetShortcut, altScroll, scrollKey };
 }
-// The browser-level shortcut as Chrome shows it (for example "⇧⌘0"), or "" when the user removed it.
+// The browser-level shortcut for opening Nerdfader as the browser shows it (for example "⇧⌘0"), or "" when none is set.
 async function browserShortcut() {
   const commands = await chrome.commands.getAll();
   return commands.find((c) => c.name === "_execute_action")?.shortcut ?? "";
@@ -224,6 +225,11 @@ const handlers = {
   async toggle(_msg, sender) {
     await openPanel(sender.tab, { source: "shortcut" });
   },
+  // The reset shortcut: back to 100% (every tab's volume, while all_tabs is on), with the dialog shown for a moment.
+  async resetTab(_msg, sender) {
+    await resetVolume(sender.tab);
+    return { percent: DEFAULT };
+  },
   // Quick scrolling sends several at once; each starts from where the previous one left the volume.
   nudge(msg, sender) {
     const tabId = sender.tab.id;
@@ -244,6 +250,7 @@ const handlers = {
   async setSettings(msg) {
     const change = {};
     if (msg.shortcut !== undefined) change.shortcut = msg.shortcut;
+    if (msg.resetShortcut !== undefined) change.resetShortcut = msg.resetShortcut;
     if (typeof msg.altScroll === "boolean") change.altScroll = msg.altScroll;
     if (["alt", "ctrl", "shift", "meta"].includes(msg.scrollKey)) change.scrollKey = msg.scrollKey;
     await chrome.storage.local.set(change);
@@ -274,7 +281,7 @@ chrome.runtime.onMessage.addListener((msg, sender, reply) => {
   if (msg?.target === "offscreen") return false;
   const handler = handlers[msg?.type];
   if (!handler) return false;
-  if (["hello", "status", "toggle", "nudge"].includes(msg.type) && !sender.tab) return false;
+  if (["hello", "status", "toggle", "nudge", "resetTab"].includes(msg.type) && !sender.tab) return false;
   if (msg.tabId === undefined && sender.tab) msg.tabId = sender.tab.id;   // the in-page dialog doesn't know its tab id
   handler(msg, sender).then(reply, (err) => reply({ error: String(err) }));
   return true;   // reply arrives asynchronously
@@ -320,6 +327,19 @@ async function openPanel(tab, { moment = false, source = "action" } = {}) {
   }
 }
 chrome.action.onClicked.addListener((tab) => openPanel(tab));
+
+async function resetVolume(tab) {
+  const info = await tabInfo(tab.id);
+  if (info.override.on) await handlers.setOverride({ tabId: tab.id, percent: DEFAULT });
+  else await handlers.setTab({ tabId: tab.id, percent: DEFAULT });
+  openPanel(tab, { moment: true });
+}
+// The browser-level "reset" shortcut, if the user gave it one in the browser's shortcuts page.
+chrome.commands.onCommand.addListener(async (command, tab) => {
+  if (command !== "reset-volume") return;
+  tab ??= (await chrome.tabs.query({ active: true, lastFocusedWindow: true }))[0];
+  if (tab) resetVolume(tab);
+});
 
 // A tab that went quiet in capture mode starts capturing again when it plays.
 chrome.tabs.onUpdated.addListener(async (tabId, change) => {

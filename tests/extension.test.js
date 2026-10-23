@@ -901,3 +901,44 @@ test("pressing the scroll key during a plain scroll (or its coasting) doesn't ch
   await send({ type: "setTab", tabId, percent: 100 });
   await page.close();
 });
+
+test("Command+Shift+Minus resets the tab to 100%, on the page or in the dialog; the reset key can be recorded", async () => {
+  const { page, tabId } = await openTestPage();
+  const state = async () => (await send({ type: "state", tabId })).tab;
+  await send({ type: "setTab", tabId, percent: 250 });
+  await settle();
+  await page.keyboard.press("Meta+Shift+Minus");
+  assert.equal(await until(async () => (await state()) === 100, 2000), true, "reset from the page");
+  near((await real(tabId)).a, 0.8, "plays at 100%");
+  assert.equal(await until(() => dialogReady(page), 2000), true, "the dialog shows the 100% for a moment");
+  // In the open dialog: reset without closing it.
+  await page.keyboard.press("3");
+  assert.equal(await until(async () => (await state()) === 30, 2000), true);
+  await page.keyboard.press("Meta+Shift+Minus");
+  assert.equal(await until(async () => (await state()) === 100, 2000), true, "reset from the dialog");
+  assert.equal(await dialogOpen(page), true, "the dialog stays");
+  await page.keyboard.press("Escape");
+  await until(async () => !(await dialogOpen(page)), 1000);
+
+  // Record a different reset key in the panel (the popup shows the same panel without a shadow root).
+  const popup = await context.newPage();
+  await popup.addInitScript(([tabId, url]) => { chrome.tabs.query = async () => [{ id: tabId, url }]; }, [tabId, page.url()]);
+  await popup.goto(ext.url());
+  await popup.locator(".resetBtn", { hasText: "⇧⌘−" }).waitFor();
+  assert.equal(await popup.locator('.shortcutBtn[data-setting="shortcut"]').textContent(), "⇧⌘0");
+  await popup.click(".resetBtn");
+  await popup.keyboard.press("Control+Shift+KeyR");
+  await popup.locator(".resetBtn", { hasText: "⌃⇧R" }).waitFor();
+  assert.equal(await popup.locator('.shortcutBtn[data-setting="shortcut"]').textContent(), "⇧⌘0", "the open shortcut is untouched");
+  await popup.close();
+  await settle();
+  await page.bringToFront();
+  await send({ type: "setTab", tabId, percent: 200 });
+  await page.keyboard.press("Meta+Shift+Minus");
+  await wait(400);
+  assert.equal(await state(), 200, "the old reset key no longer resets");
+  await page.keyboard.press("Control+Shift+KeyR");
+  assert.equal(await until(async () => (await state()) === 100, 2000), true, "the recorded one does");
+  await send({ type: "setSettings", resetShortcut: { code: "Minus", alt: false, ctrl: false, meta: true, shift: true } });
+  await page.close();
+});

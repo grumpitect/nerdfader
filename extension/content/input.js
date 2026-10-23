@@ -1,15 +1,17 @@
-// Runs in the extension's isolated world in every frame: the shortcut that opens the dialog, and modifier + scroll
+// Runs in the extension's isolated world in every frame: the shortcuts that open the dialog and reset the volume,
+// and modifier + scroll
 // (Command by default), which changes the tab's volume and shows the dialog for a moment. While the dialog is up, any
 // scroll over it changes the volume too, handled here as well: one place counts every scroll, so a swipe that opens
 // the dialog keeps going without a hiccup.
-// Settings come from the background ({ shortcut, altScroll, scrollKey }) when the page loads and whenever they change.
+// Settings come from the background ({ shortcut, resetShortcut, altScroll, scrollKey }) when the page loads and
+// whenever they change.
 (() => {
   const connected = () => { try { return !!chrome.runtime?.id; } catch { return false; } };
   const previous = window.__nerdfaderInput;
   if (typeof previous === "function" && previous()) return;
   window.__nerdfaderInput = connected;
 
-  let settings = { shortcut: null, altScroll: true, scrollKey: "meta" };
+  let settings = { shortcut: null, resetShortcut: null, altScroll: true, scrollKey: "meta" };
   const ask = (msg) => (connected() ? chrome.runtime.sendMessage(msg) : Promise.reject(new Error("disconnected")));
   ask({ type: "getSettings" }).then((s) => s && !s.error && (settings = s), () => {});
   chrome.runtime.onMessage.addListener((msg) => { if (msg?.type === "settings") settings = msg.settings; });
@@ -20,14 +22,15 @@
 
   function onKey(e) {
     if (!connected()) return shutDown();
-    const s = settings.shortcut;
-    if (!matches(e, s) || e.repeat) return;
+    const action = matches(e, settings.shortcut) ? "toggle" : matches(e, settings.resetShortcut) ? "resetTab" : null;
+    if (!action || e.repeat) return;
+    const s = action === "toggle" ? settings.shortcut : settings.resetShortcut;
     // A shortcut without Ctrl, Alt or Cmd would get in the way of typing, so it doesn't fire in text fields.
     if (!s.alt && !s.ctrl && !s.meta && editable(e.composedPath()[0])) return;
     if (e.composedPath().some((n) => n.tagName === "NERDFADER-DIALOG")) return;   // the dialog handles its own keys
     e.preventDefault();
     e.stopImmediatePropagation();
-    ask({ type: "toggle" }).catch(() => {});
+    ask({ type: action }).catch(() => {});
   }
 
   // A trackpad pinch reaches pages as Control + scroll, so Control only counts while the Control key is really held.

@@ -25,7 +25,9 @@ Made for the [Nerdative](https://www.youtube.com/@nerdative) channel on YouTube,
   without permission to process it) can't be boosted from inside the page. For those, Nerdfader offers capture
   mode: once for that tab, or always. It runs only while the tab plays sound: it stops a moment after the tab
   pauses or goes quiet, and starts again when it plays. The ⓘ next to capture_mode in the dialog explains it.
-- **Reset.** One click (or **r**) puts the tab back to 100%.
+- **Reset.** One click (or **r** in the dialog, or **⌘⇧−** on any page) puts the tab back to 100%; with all_tabs on,
+  it resets every tab. After ⌘⇧− the dialog shows the 100% for a moment. Record a different reset key in the dialog
+  (**reset_key**).
 - **Opens over the page.** The dialog sits in the page, centered over a blurred backdrop, and shows above fullscreen
   video too. Its name links here, its version to the release notes. Keys you type in it don't reach the page, so a
   video player won't also seek. On pages extensions can't touch (`arc://` and `chrome://` pages, the Web Store) the
@@ -34,10 +36,11 @@ Made for the [Nerdative](https://www.youtube.com/@nerdative) channel on YouTube,
   tab goes back to the volume it had before.
 - **Badge.** The toolbar icon shows the tab's volume when it isn't 100%.
 - **Shortcut.** **⌘⇧0** (Ctrl+Shift+9 on Windows and Linux, where Windows often keeps Ctrl+Shift+0 for switching
-  keyboard layouts) opens and closes the dialog. Record your own in the dialog (click the shortcut, press
-  the keys; Delete removes it): it works on any page and inside embedded players. The browser's
-  own shortcut also works from the address bar; change it at `arc://extensions/shortcuts` (the dialog links there).
-  If the browser already uses that key itself, it leaves the browser-level shortcut unassigned; pick another there.
+  keyboard layouts) opens and closes the dialog. Record your own in the dialog (click the shortcut, press the keys;
+  Delete removes it): it works on any page and inside embedded players. The browser-level shortcut (same default)
+  also works from the address bar; change it at `arc://extensions/shortcuts` (the dialog links there), where you can
+  also give the reset action a browser-level key. The browser only assigns the default on a fresh install, and it
+  doesn't allow + or − in browser-level shortcuts.
 - **Modifier + scroll.** Hold Command (the Windows key elsewhere) and scroll anywhere, with a mouse wheel or two
   fingers on a trackpad, to change the tab's volume: scrolling down turns it up (with macOS natural scrolling, that's
   a two-finger swipe up). The dialog shows for a moment and follows along while you keep scrolling; it goes away 2

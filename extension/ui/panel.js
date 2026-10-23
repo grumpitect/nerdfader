@@ -191,9 +191,14 @@ globalThis.NerdfaderPanel = (() => {
 <div class="rule"></div>
 <div class="setting">
   <span class="name">shortcut</span>
-  <button class="shortcutBtn" title="Click, then press the keys you want (Esc cancels, Delete removes it)"></button>
+  <button class="shortcutBtn" data-setting="shortcut" title="Click, then press the keys you want (Esc cancels, Delete removes it)"></button>
 </div>
 <div class="hint shortcutHint"></div>
+<div class="setting">
+  <span class="name">reset_key</span>
+  <button class="shortcutBtn resetBtn" data-setting="resetShortcut" title="Click, then press the keys you want (Esc cancels, Delete removes it)"></button>
+</div>
+<div class="hint resetHint"></div>
 <label class="toggle">
   <input type="checkbox" class="altScrollToggle">
   <span class="caret">&gt;</span>
@@ -210,12 +215,12 @@ globalThis.NerdfaderPanel = (() => {
   <a href="https://github.com/grumpitect/nerdfader/issues/new/choose" target="_blank" rel="noopener">feedback ↗</a>
 </footer>`;
 
-  // A shortcut as the platform writes it: ⌃⌥⇧⌘V on a Mac, Ctrl+Alt+Shift+V elsewhere.
+  // A shortcut as the platform writes it: ⌃⌥⇧⌘V on a Mac, Ctrl+Alt+Shift+V elsewhere. Shift + = shows as +.
   const mac = /Mac/.test(navigator.platform);
   function shortcutLabel(s) {
     if (!s) return "none";
     const names = { ArrowLeft: "←", ArrowRight: "→", ArrowUp: "↑", ArrowDown: "↓", Space: "Space", Backquote: "`",
-      Minus: "-", Equal: "=", BracketLeft: "[", BracketRight: "]", Backslash: "\\", Semicolon: ";", Quote: "'",
+      Minus: "−", Equal: s.shift ? "+" : "=", BracketLeft: "[", BracketRight: "]", Backslash: "\\", Semicolon: ";", Quote: "'",
       Comma: ",", Period: ".", Slash: "/", Escape: "Esc", Enter: "Return", Backspace: "Delete", Tab: "Tab" };
     const key = names[s.code] ?? s.code.replace(/^Key|^Digit|^Numpad/, "");
     if (mac) return (s.ctrl ? "⌃" : "") + (s.alt ? "⌥" : "") + (s.shift ? "⇧" : "") + (s.meta ? "⌘" : "") + key;
@@ -316,7 +321,7 @@ globalThis.NerdfaderPanel = (() => {
     }, 500);
 
     const current = () => (state.override.on ? state.override.percent : state.tab);
-    let recording = false;
+    let recording = null;   // which shortcut is being recorded: "shortcut", "resetShortcut", or none
     function saveSettings(change) {
       state.settings = { ...state.settings, ...change };
       render();
@@ -371,13 +376,17 @@ globalThis.NerdfaderPanel = (() => {
       $("alwaysToggle").checked = state.captureAlways;
       $("captureHint").textContent = "if on, allows a volume boost by recording the tab";
 
-      const settings = state.settings ?? { shortcut: null, altScroll: true, scrollKey: "meta" };
-      $("shortcutBtn").textContent = recording ? "press keys…" : shortcutLabel(settings.shortcut);
-      $("shortcutBtn").classList.toggle("kbd", !recording && !!settings.shortcut);
-      $("shortcutBtn").classList.toggle("recording", recording);
+      const settings = state.settings ?? { shortcut: null, resetShortcut: null, altScroll: true, scrollKey: "meta" };
+      for (const b of root.querySelectorAll(".shortcutBtn")) {
+        const which = b.dataset.setting, value = settings[which];
+        b.textContent = recording === which ? "press keys…" : shortcutLabel(value);
+        b.classList.toggle("kbd", recording !== which && !!value);
+        b.classList.toggle("recording", recording === which);
+      }
+      $("resetHint").textContent = recording === "resetShortcut" ? "Esc cancels, Delete removes it" : "resets the tab to 100% on any page";
       $("shortcutHint").innerHTML = "";
       $("shortcutHint").append(
-        recording ? "Esc cancels, Delete removes it" : "opens this on any page",
+        recording === "shortcut" ? "Esc cancels, Delete removes it" : "opens this on any page",
         ...(state.browserShortcut !== undefined
           ? [" · browser: ", Object.assign(document.createElement("span"), { textContent: state.browserShortcut || "none", className: state.browserShortcut ? "kbd" : "" }), " ",
              Object.assign(document.createElement("a"), { textContent: "change", className: "changeBrowser", tabIndex: -1 })]
@@ -421,7 +430,9 @@ globalThis.NerdfaderPanel = (() => {
       root.focus();
     });
 
-    $("shortcutBtn").addEventListener("click", () => { recording = !recording; render(); });
+    for (const b of root.querySelectorAll(".shortcutBtn")) {
+      b.addEventListener("click", () => { recording = recording === b.dataset.setting ? null : b.dataset.setting; render(); });
+    }
     $("shortcutHint").addEventListener("click", (e) => {
       if (e.target.classList.contains("changeBrowser")) call("openShortcuts");
     });
@@ -439,16 +450,17 @@ globalThis.NerdfaderPanel = (() => {
       root.focus();
     });
 
-    // While recording, the next key press with a non-modifier key becomes the shortcut.
+    // While recording, the next key press with a non-modifier key becomes that shortcut.
     function record(e) {
       e.preventDefault();
       e.stopPropagation();
       if (["Shift", "Control", "Alt", "Meta"].includes(e.key)) return;
       const plain = !e.altKey && !e.ctrlKey && !e.metaKey && !e.shiftKey;
-      recording = false;
+      const which = recording;
+      recording = null;
       if (e.key === "Escape" && plain) return render();
-      if ((e.key === "Backspace" || e.key === "Delete") && plain) return saveSettings({ shortcut: null });
-      saveSettings({ shortcut: { code: e.code, alt: e.altKey, ctrl: e.ctrlKey, meta: e.metaKey, shift: e.shiftKey } });
+      if ((e.key === "Backspace" || e.key === "Delete") && plain) return saveSettings({ [which]: null });
+      saveSettings({ [which]: { code: e.code, alt: e.altKey, ctrl: e.ctrlKey, meta: e.metaKey, shift: e.shiftKey } });
       root.focus();
     }
 
@@ -462,8 +474,14 @@ globalThis.NerdfaderPanel = (() => {
         return;
       }
       if (e.key === "Escape" && close) { e.preventDefault(); close(); return; }
+      const same = (s) => s && e.code === s.code && e.altKey === s.alt && e.ctrlKey === s.ctrl && e.metaKey === s.meta && e.shiftKey === s.shift;
+      if (same(state.settings?.resetShortcut) && editable()) {
+        e.preventDefault();
+        if (!e.repeat) setPercent(DEFAULT);
+        return;
+      }
       const s = state.settings?.shortcut;
-      if (close && s && e.code === s.code && e.altKey === s.alt && e.ctrlKey === s.ctrl && e.metaKey === s.meta && e.shiftKey === s.shift) {
+      if (close && same(s)) {
         // The shortcut that opened the dialog closes it too, but only a new press: while the keys are still held
         // from opening it, the system repeats them, and those repeats arrive here once the dialog has focus.
         e.preventDefault();

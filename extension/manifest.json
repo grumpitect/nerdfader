@@ -65,6 +65,9 @@
         "mac": "Command+Shift+0"
       },
       "description": "Open Nerdfader"
+    },
+    "reset-volume": {
+      "description": "Reset the tab's volume to 100%"
     }
   }
 }

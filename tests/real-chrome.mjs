@@ -388,16 +388,24 @@ test("shortcuts: the browser shortcut is registered, the page shortcut toggles t
   // Chrome assigns an extension's default browser shortcut on a fresh install only (not when an update adds it).
   if (id) await cdp.send("Extensions.uninstall", { id });
   await install("working tree");
-  // If a browser already uses the key itself it leaves Nerdfader's browser-level shortcut unassigned (then the
-  // in-page shortcut below still does the job, and the dialog shows "browser: none · change").
-  const browserShortcut = (await call({ type: "state", tabId: 0 })).browserShortcut;
-  console.log(`    browser-level shortcut on a fresh install: "${browserShortcut}"`);
-  assert.ok(["⇧⌘0", ""].includes(browserShortcut), `browser-level shortcut is ⇧⌘0 or unassigned (got "${browserShortcut}")`);
+  // Chrome assigns the suggested browser-level shortcut on a fresh install; the reset action has none (browser-level
+  // shortcuts can't use -), but is listed for the user to set.
+  assert.equal((await call({ type: "state", tabId: 0 })).browserShortcut, "⇧⌘0", "browser-level shortcut on a fresh install");
+  const commands = await bg(async () => (await chrome.commands.getAll()).map((c) => c.name).sort());
+  assert.deepEqual(commands, ["_execute_action", "reset-volume"]);
   const p = await open(`${origin}/player?src=/tone.wav`);
   await p.page.keyboard.press("Meta+Shift+Digit0");
   assert.equal(await until(async () => (await dialog(p.page)) === "ready", 3000), true, "page shortcut opens");
   await p.page.keyboard.press("Meta+Shift+Digit0");
   assert.equal(await until(async () => (await dialog(p.page)) === "closed", 1000), true, "and closes");
+
+  // Command + Shift + Minus resets the tab to 100%.
+  await call({ type: "setTab", tabId: p.tabId, percent: 250 });
+  await p.page.keyboard.press("Meta+Shift+Minus");
+  assert.equal(await until(async () => (await state(p.tabId)).tab === 100, 2000), true, "reset shortcut");
+  await until(async () => (await dialog(p.page)) === "ready", 2000);
+  await p.page.keyboard.press("Escape");
+  await until(async () => (await dialog(p.page)) === "closed", 1000);
 
   // Held down: macOS repeats the keys about every 35 ms after half a second. The dialog stays; a new press closes it.
   const keys = await ctx.newCDPSession(p.page);
