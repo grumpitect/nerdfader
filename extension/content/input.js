@@ -17,8 +17,11 @@
   chrome.runtime.onMessage.addListener((msg) => { if (msg?.type === "settings") settings = msg.settings; });
 
   const editable = (el) => el?.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(el?.tagName ?? "");
+  // The two delete keys count as one: Mac keyboards call the big one "delete" (the browser's Backspace) and have a
+  // forward delete (fn + delete, or ⌦ on full-size keyboards).
+  const sameKey = (a, b) => a === b || (/^(Backspace|Delete)$/.test(a) && /^(Backspace|Delete)$/.test(b));
   const matches = (e, s) =>
-    s && e.code === s.code && e.altKey === s.alt && e.ctrlKey === s.ctrl && e.metaKey === s.meta && e.shiftKey === s.shift;
+    s && sameKey(e.code, s.code) && e.altKey === s.alt && e.ctrlKey === s.ctrl && e.metaKey === s.meta && e.shiftKey === s.shift;
 
   // Which shortcut a key press is, and what it asks the background to do.
   const actions = [

@@ -928,6 +928,12 @@ test("Command+Shift+Delete resets the tab to 100%, on the page or in the dialog;
   await settle();
   await page.keyboard.press("Meta+Shift+Backspace");
   assert.equal(await until(async () => (await state()) === 100, 2000), true, "reset from the page");
+  // The other delete key (forward delete: fn + delete on a MacBook) does the same.
+  await page.keyboard.press("Escape");
+  await until(async () => !(await dialogOpen(page)), 1000);
+  await send({ type: "setTab", tabId, percent: 250 });
+  await page.keyboard.press("Meta+Shift+Delete");
+  assert.equal(await until(async () => (await state()) === 100, 2000), true, "forward delete resets too");
   near((await real(tabId)).a, 0.8, "plays at 100%");
   assert.equal(await until(() => dialogReady(page), 2000), true, "the dialog shows the 100% for a moment");
   // In the open dialog: reset without closing it.

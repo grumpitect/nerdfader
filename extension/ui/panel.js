@@ -473,7 +473,9 @@ globalThis.NerdfaderPanel = (() => {
         return;
       }
       if (e.key === "Escape" && close) { e.preventDefault(); close(); return; }
-      const same = (s) => s && e.code === s.code && e.altKey === s.alt && e.ctrlKey === s.ctrl && e.metaKey === s.meta && e.shiftKey === s.shift;
+      // (The two delete keys count as one, as in content/input.js.)
+      const sameKey = (a, b) => a === b || (/^(Backspace|Delete)$/.test(a) && /^(Backspace|Delete)$/.test(b));
+      const same = (s) => s && sameKey(e.code, s.code) && e.altKey === s.alt && e.ctrlKey === s.ctrl && e.metaKey === s.meta && e.shiftKey === s.shift;
       if (editable() && same(state.settings?.resetShortcut)) {
         e.preventDefault();
         e.nerdfaderMoment = true;   // see ui/overlay.js: like scrolling, not like using the dialog
