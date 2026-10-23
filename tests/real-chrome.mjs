@@ -232,7 +232,8 @@ test("updating from 1.0 over open tabs: no errors, and those tabs work with the 
   near((await realVolume(player.tabId))[0], gain(50), "1.0 works");
 
   await install("working tree");
-  assert.equal((await bg(() => chrome.runtime.getManifest().version)), "1.1.0");
+  const version = JSON.parse(fs.readFileSync(path.join(ROOT, "extension/manifest.json"), "utf8")).version;
+  assert.equal(await bg(() => chrome.runtime.getManifest().version), version, "running the new version");
   await call({ type: "setTab", tabId: player.tabId, percent: 30 });
   await wait(300);
   near((await realVolume(player.tabId))[0], gain(30), "the open tab follows the new version, scaled once");

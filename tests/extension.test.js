@@ -673,6 +673,7 @@ test("Option/Alt + scroll changes the volume and shows the dialog for a moment; 
   await page.mouse.wheel(0, 300);
   assert.equal(await until(() => page.evaluate(() => scrollY > 0), 2000), true, "page scrolls");
   assert.equal(await dialogOpen(page), false);
+  await wait(400);   // a pause: a scroll that began without the key never turns into a volume change
 
   // One notch down (louder): one step, and the dialog shows up; left alone, it goes away after about 2 s.
   await altWheel(100);
@@ -876,4 +877,27 @@ test("the name links to the project on GitHub, the version to its releases", asy
   assert.equal(await popup.getAttribute(".version", "href"), "https://github.com/grumpitect/nerdfader/releases");
   assert.equal(await popup.evaluate(() => document.querySelector(".brand").tabIndex), -1, "not focusable, like the rest");
   await popup.close();
+});
+
+test("pressing the scroll key during a plain scroll (or its coasting) doesn't change the volume", async () => {
+  const { page, tabId } = await openTestPage();
+  await page.evaluate(() => { document.body.style.height = "8000px"; });
+  await page.mouse.move(300, 300);
+  const cdp = await context.newCDPSession(page);
+  const scroll = (deltaY, modifiers) => cdp.send("Input.dispatchMouseEvent", { type: "mouseWheel", x: 300, y: 300, deltaX: 0, deltaY, modifiers });
+  // A flick and its coast: steady scroll events, and Command goes down partway through (modifier 4).
+  for (let i = 0; i < 24; i++) {
+    await scroll(40, i < 10 ? 0 : 4);
+    await wait(30);
+  }
+  await wait(500);
+  assert.equal((await send({ type: "state", tabId })).tab, 100, "volume unchanged");
+  assert.equal(await dialogOpen(page), false, "no dialog");
+  // After a pause, a scroll that starts with Command held does change it.
+  await scroll(40, 4);
+  assert.equal(await until(async () => (await send({ type: "state", tabId })).tab === 125, 2000), true, "a new Command + scroll works");
+  await until(() => dialogReady(page), 2000);
+  await page.keyboard.press("Escape");
+  await send({ type: "setTab", tabId, percent: 100 });
+  await page.close();
 });

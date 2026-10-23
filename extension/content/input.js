@@ -43,11 +43,17 @@
   // The first scroll of a gesture (after a 250 ms pause) moves one step at once, whatever its size, since a mouse-wheel
   // notch can arrive as anything from a few pixels to over a hundred; after that, one step per 100 px of scrolling.
   // A step is the same as an arrow key in the dialog; scrolling down turns it up.
-  let carried = 0, lastWheel = -Infinity;
+  //
+  // A gesture (scroll events less than 250 ms apart) only changes the volume if the scroll key was already held when
+  // it began. After a flick, macOS keeps sending scroll events while the page coasts to a stop, even once it looks
+  // still; pressing the key then must not turn that coast into a volume change.
+  let carried = 0, lastWheel = -Infinity, lastAnyWheel = -Infinity, gestureOurs = false;
   function onWheel(e) {
     if (!connected()) return shutDown();
     const overDialog = e.composedPath().some((n) => n.tagName === "NERDFADER-DIALOG");
-    if (!overDialog && (!settings.altScroll || !scrollKeyHeld(e))) return;
+    if (e.timeStamp - lastAnyWheel > 250) gestureOurs = overDialog || (settings.altScroll && scrollKeyHeld(e));
+    lastAnyWheel = e.timeStamp;
+    if (!overDialog && (!gestureOurs || !settings.altScroll || !scrollKeyHeld(e))) return;
     if (overDialog && e.ctrlKey && !controlHeld) return;   // a pinch over the dialog
     e.preventDefault();
     e.stopImmediatePropagation();

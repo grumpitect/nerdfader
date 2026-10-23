@@ -44,7 +44,8 @@ Made for the [Nerdative](https://www.youtube.com/@nerdative) channel on YouTube,
   seconds after you stop. Click or type in it and it stays until you click away or press Esc. Pick the key in
   **scroll_volume**: ⌘ Command (the default), ⌥ Option, ⌃ Control or ⇧ Shift (or turn it off). On a Mac, Option works
   with a trackpad only (macOS doesn't pass Option + mouse wheel to pages); with a mouse, pick another key. A trackpad
-  pinch never counts as Control + scroll. The page doesn't rubber-band while the dialog is up, so a hard swipe at the
+  pinch never counts as Control + scroll, and a scroll that began without the key (or is still coasting after a
+  flick) never turns into a volume change when you press it. The page doesn't rubber-band while the dialog is up, so a hard swipe at the
   top or bottom of a page stays with the dialog.
 - **Keyboard and mouse wheel in the dialog.** ←/→ change by 5% (25% above 100%; hold Shift for finer steps), **0**
   to **9** jump to 0 to 90%, **r** resets, **c** takes up the capture-mode offer, **Esc** closes, and scrolling over
