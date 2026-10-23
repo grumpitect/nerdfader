@@ -103,8 +103,6 @@ globalThis.NerdfaderPanel = (() => {
 .nf .toggle input:checked ~ .switch::after { transform: translateX(14px); }
 
 .nf .hint { color: var(--muted); font-size: 12px; margin: 4px 0 8px 18px; }
-.nf .hint a { color: var(--cyan); cursor: pointer; text-decoration: none; }
-.nf .hint a:hover { text-decoration: underline; }
 .nf .infoBtn {
   font: italic 700 10px/1 Georgia, serif; width: 15px; height: 15px; padding: 0; margin-left: 6px; border-radius: 50%;
   vertical-align: 1px; color: var(--muted); border-color: var(--muted);
@@ -120,7 +118,10 @@ globalThis.NerdfaderPanel = (() => {
 .nf .picks.off { opacity: 0.4; }
 .nf .setting { display: flex; align-items: center; gap: 8px; padding-left: 18px; }
 .nf .setting .name { flex: 1; }
-.nf .shortcutBtn { min-width: 64px; }
+.nf .keysHead { padding-left: 18px; }
+.nf .keyGrid { display: grid; grid-template-columns: auto 1fr auto 1fr; align-items: center; gap: 6px 8px; margin: 6px 0 0 18px; }
+.nf .keyName { color: var(--muted); font-size: 12px; }
+.nf .shortcutBtn { min-width: 0; padding: 2px 6px; justify-self: stretch; text-align: center; white-space: nowrap; }   /* all four the same width */
 /* Modifier symbols (⌘⌥⇧⌃) in the system font: the monospace font has no proper ⇧ and borrows a mismatched one. */
 .nf .kbd { font-family: -apple-system, BlinkMacSystemFont, system-ui, "Segoe UI", sans-serif; font-weight: 600; letter-spacing: 0.06em; }
 .nf .shortcutBtn.recording { color: var(--pink); border-color: var(--pink); }
@@ -189,16 +190,14 @@ globalThis.NerdfaderPanel = (() => {
   <p><b>On:</b> it just does it.</p>
 </div>
 <div class="rule"></div>
-<div class="setting">
-  <span class="name">shortcut</span>
-  <button class="shortcutBtn" data-setting="shortcut" title="Click, then press the keys you want (Esc cancels, Delete removes it)"></button>
+<div class="keysHead"><span class="name">keys</span></div>
+<div class="keyGrid">
+  <span class="keyName">open</span><button class="shortcutBtn" data-setting="shortcut"></button>
+  <span class="keyName">reset</span><button class="shortcutBtn" data-setting="resetShortcut"></button>
+  <span class="keyName">louder</span><button class="shortcutBtn" data-setting="upShortcut"></button>
+  <span class="keyName">quieter</span><button class="shortcutBtn" data-setting="downShortcut"></button>
 </div>
-<div class="hint shortcutHint"></div>
-<div class="setting">
-  <span class="name">reset_key</span>
-  <button class="shortcutBtn resetBtn" data-setting="resetShortcut" title="Click, then press the keys you want (Esc cancels, Delete removes it)"></button>
-</div>
-<div class="hint resetHint"></div>
+<div class="hint keysHint"></div>
 <label class="toggle">
   <input type="checkbox" class="altScrollToggle">
   <span class="caret">&gt;</span>
@@ -219,9 +218,9 @@ globalThis.NerdfaderPanel = (() => {
   const mac = /Mac/.test(navigator.platform);
   function shortcutLabel(s) {
     if (!s) return "none";
-    const names = { ArrowLeft: "←", ArrowRight: "→", ArrowUp: "↑", ArrowDown: "↓", Space: "Space", Backquote: "`",
+    const names = { ArrowLeft: "←", ArrowRight: "→", ArrowUp: "↑", ArrowDown: "↓", End: "End", Home: "Home", PageUp: "PgUp", PageDown: "PgDn", Space: "Space", Backquote: "`",
       Minus: "−", Equal: s.shift ? "+" : "=", BracketLeft: "[", BracketRight: "]", Backslash: "\\", Semicolon: ";", Quote: "'",
-      Comma: ",", Period: ".", Slash: "/", Escape: "Esc", Enter: "Return", Backspace: "Delete", Tab: "Tab" };
+      Comma: ",", Period: ".", Slash: "/", Escape: "Esc", Enter: "Return", Backspace: mac ? "⌫" : "Backspace", Delete: mac ? "⌦" : "Del", Tab: "Tab" };
     const key = names[s.code] ?? s.code.replace(/^Key|^Digit|^Numpad/, "");
     if (mac) return (s.ctrl ? "⌃" : "") + (s.alt ? "⌥" : "") + (s.shift ? "⇧" : "") + (s.meta ? "⌘" : "") + key;
     return [s.ctrl && "Ctrl", s.alt && "Alt", s.shift && "Shift", s.meta && "Meta", key].filter(Boolean).join("+");
@@ -321,7 +320,7 @@ globalThis.NerdfaderPanel = (() => {
     }, 500);
 
     const current = () => (state.override.on ? state.override.percent : state.tab);
-    let recording = null;   // which shortcut is being recorded: "shortcut", "resetShortcut", or none
+    let recording = null;   // which shortcut is being recorded ("shortcut", "resetShortcut", "upShortcut", ...), if any
     function saveSettings(change) {
       state.settings = { ...state.settings, ...change };
       render();
@@ -376,32 +375,30 @@ globalThis.NerdfaderPanel = (() => {
       $("alwaysToggle").checked = state.captureAlways;
       $("captureHint").textContent = "if on, allows a volume boost by recording the tab";
 
-      const settings = state.settings ?? { shortcut: null, resetShortcut: null, altScroll: true, scrollKey: "meta" };
+      const settings = state.settings ?? { shortcut: null, resetShortcut: null, upShortcut: null, downShortcut: null, altScroll: true, scrollKeys: ["shift", "meta"] };
       for (const b of root.querySelectorAll(".shortcutBtn")) {
         const which = b.dataset.setting, value = settings[which];
         b.textContent = recording === which ? "press keys…" : shortcutLabel(value);
+        b.title = `${b.previousElementSibling.textContent}: click, then press the keys you want`;
         b.classList.toggle("kbd", recording !== which && !!value);
         b.classList.toggle("recording", recording === which);
       }
-      $("resetHint").textContent = recording === "resetShortcut" ? "Esc cancels, Delete removes it" : "resets the tab to 100% on any page";
-      $("shortcutHint").innerHTML = "";
-      $("shortcutHint").append(
-        recording === "shortcut" ? "Esc cancels, Delete removes it" : "opens this on any page",
-        ...(state.browserShortcut !== undefined
-          ? [" · browser: ", Object.assign(document.createElement("span"), { textContent: state.browserShortcut || "none", className: state.browserShortcut ? "kbd" : "" }), " ",
-             Object.assign(document.createElement("a"), { textContent: "change", className: "changeBrowser", tabIndex: -1 })]
-          : []),
-      );
-      const key = settings.scrollKey ?? "meta";
+      $("keysHint").textContent = recording ? "press the new keys · Esc cancels · Delete removes it" : "work on any page · click one to change it";
+      const held = settings.scrollKeys?.length ? settings.scrollKeys : ["shift", "meta"];
+      const order = ["ctrl", "alt", "shift", "meta"];   // the order a Mac writes them in
+      const words = order.filter((k) => held.includes(k)).map((k) => modifierWords[k]).join(" + ");
       $("altScrollToggle").checked = settings.altScroll;
       $("altScrollHint").textContent = settings.altScroll
-        ? `hold ${modifierWords[key]} and scroll on any page` + (mac && key === "alt" ? " · trackpad only" : "")
+        ? `hold ${words} and scroll on any page` + (mac && held.includes("alt") ? " · trackpad only" : "")
         : "off";
       $("picks").classList.toggle("off", !settings.altScroll);
       for (const b of root.querySelectorAll(".pick")) {
+        const on = held.includes(b.dataset.key);
         b.textContent = modifierNames[b.dataset.key];
-        b.title = `hold ${modifierWords[b.dataset.key]} to change the volume by scrolling`;
-        b.classList.toggle("on", b.dataset.key === key);
+        b.title = on && held.length === 1
+          ? "at least one key stays on"
+          : `${on ? "don't hold" : "also hold"} ${modifierWords[b.dataset.key]} to change the volume by scrolling`;
+        b.classList.toggle("on", on);
       }
     }
 
@@ -433,9 +430,6 @@ globalThis.NerdfaderPanel = (() => {
     for (const b of root.querySelectorAll(".shortcutBtn")) {
       b.addEventListener("click", () => { recording = recording === b.dataset.setting ? null : b.dataset.setting; render(); });
     }
-    $("shortcutHint").addEventListener("click", (e) => {
-      if (e.target.classList.contains("changeBrowser")) call("openShortcuts");
-    });
     $("infoBtn").addEventListener("click", (e) => {
       e.preventDefault();   // inside the switch's label: open the explanation, don't flip the switch
       e.stopPropagation();
@@ -443,7 +437,12 @@ globalThis.NerdfaderPanel = (() => {
       $("infoBtn").classList.toggle("open", !$("captureInfo").hidden);
     });
     for (const b of root.querySelectorAll(".pick")) {
-      b.addEventListener("click", () => saveSettings({ scrollKey: b.dataset.key, altScroll: true }));
+      // Each one switches on and off; the last one on stays on.
+      b.addEventListener("click", () => {
+        const held = state.settings?.scrollKeys?.length ? state.settings.scrollKeys : ["shift", "meta"];
+        const next = held.includes(b.dataset.key) ? held.filter((k) => k !== b.dataset.key) : [...held, b.dataset.key];
+        if (next.length) saveSettings({ scrollKeys: next, altScroll: true });
+      });
     }
     $("altScrollToggle").addEventListener("change", (e) => {
       saveSettings({ altScroll: e.target.checked });
@@ -475,10 +474,19 @@ globalThis.NerdfaderPanel = (() => {
       }
       if (e.key === "Escape" && close) { e.preventDefault(); close(); return; }
       const same = (s) => s && e.code === s.code && e.altKey === s.alt && e.ctrlKey === s.ctrl && e.metaKey === s.meta && e.shiftKey === s.shift;
-      if (same(state.settings?.resetShortcut) && editable()) {
+      if (editable() && same(state.settings?.resetShortcut)) {
         e.preventDefault();
+        e.nerdfaderMoment = true;   // see ui/overlay.js: like scrolling, not like using the dialog
         if (!e.repeat) setPercent(DEFAULT);
         return;
+      }
+      for (const [name, steps] of [["upShortcut", 5], ["downShortcut", -5]]) {
+        if (editable() && same(state.settings?.[name])) {
+          e.preventDefault();   // the same step as on the page; holding the keys keeps going
+          e.nerdfaderMoment = true;
+          setPercent(toPercent(Math.min(200, Math.max(0, toPos(current()) + steps))));
+          return;
+        }
       }
       const s = state.settings?.shortcut;
       if (close && same(s)) {

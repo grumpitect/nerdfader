@@ -98,6 +98,8 @@ before(async () => {
     ],
   });
   sw = context.serviceWorkers()[0] ?? (await context.waitForEvent("serviceworker"));
+  // Most tests check the wanted defaults, so they run as Arc would (a separate test covers other browsers).
+  await sw.evaluate(() => chrome.storage.local.set({ browser: "arc" }));
   const id = new URL(sw.url()).host;
   assert.equal(id, EXT_ID, "extension id (needed for the capture allowlist)");
   ext = await context.newPage();
@@ -610,27 +612,27 @@ test("boosting loud audio makes it clearly louder without crackling", async () =
   await page.close();
 });
 
-test("the shortcut (Command+Shift+0 by default) opens and closes the dialog on the page; a new one can be recorded", async () => {
+test("the shortcut (Command+Shift+End by default) opens and closes the dialog on the page; a new one can be recorded", async () => {
   const { page, tabId } = await openTestPage();
-  await page.keyboard.press("Meta+Shift+Digit0");
+  await page.keyboard.press("Meta+Shift+End");
   assert.equal(await until(() => dialogReady(page), 2000), true, "default shortcut opens");
-  await page.keyboard.press("Meta+Shift+Digit0");
+  await page.keyboard.press("Meta+Shift+End");
   assert.equal(await until(async () => !(await dialogOpen(page)), 1000), true, "and closes");
 
   // Record Ctrl+Shift+K in the panel (the toolbar popup shows the same panel without a shadow root).
   const popup = await context.newPage();
   await popup.addInitScript(([tabId, url]) => { chrome.tabs.query = async () => [{ id: tabId, url }]; }, [tabId, page.url()]);
   await popup.goto(ext.url());
-  await popup.locator(".shortcutBtn", { hasText: "⇧⌘0" }).waitFor();
-  await popup.click(".shortcutBtn");
-  await popup.locator(".shortcutBtn", { hasText: "press keys" }).waitFor();
+  await popup.locator('.shortcutBtn[data-setting="shortcut"]', { hasText: "⇧⌘End" }).waitFor();
+  await popup.click('.shortcutBtn[data-setting="shortcut"]');
+  await popup.locator('.shortcutBtn[data-setting="shortcut"]', { hasText: "press keys" }).waitFor();
   await popup.keyboard.press("Control+Shift+KeyK");
-  await popup.locator(".shortcutBtn", { hasText: "⌃⇧K" }).waitFor();
+  await popup.locator('.shortcutBtn[data-setting="shortcut"]', { hasText: "⌃⇧K" }).waitFor();
   await popup.close();
   await settle();
 
   await page.bringToFront();
-  await page.keyboard.press("Meta+Shift+Digit0");
+  await page.keyboard.press("Meta+Shift+End");
   await wait(400);
   assert.equal(await dialogOpen(page), false, "the old shortcut no longer opens it");
   await page.keyboard.press("Control+Shift+KeyK");
@@ -653,7 +655,7 @@ test("the shortcut (Command+Shift+0 by default) opens and closes the dialog on t
   await page.keyboard.press("Escape");
   await until(async () => !(await dialogOpen(page)), 1000);
 
-  await send({ type: "setSettings", shortcut: { code: "Digit0", alt: false, ctrl: false, meta: true, shift: true } });
+  await send({ type: "setSettings", shortcut: { code: "End", alt: false, ctrl: false, meta: true, shift: true } });
   await page.close();
 });
 
@@ -662,8 +664,10 @@ test("Option/Alt + scroll changes the volume and shows the dialog for a moment; 
   await page.mouse.move(200, 200);
   const state = async () => (await send({ type: "state", tabId })).tab;
   const altWheel = async (...deltas) => {
-    await page.keyboard.down("Meta");   // Command + scroll, the default
+    await page.keyboard.down("Meta");   // Command + Shift + scroll, the default
+    await page.keyboard.down("Shift");
     for (const d of deltas) await page.mouse.wheel(0, d);
+    await page.keyboard.up("Shift");
     await page.keyboard.up("Meta");
   };
   const closesWithin = (ms) => until(async () => !(await dialogOpen(page)), ms);
@@ -681,7 +685,7 @@ test("Option/Alt + scroll changes the volume and shows the dialog for a moment; 
   assert.equal(await until(() => dialogReady(page), 2000), true, "the dialog shows");
   const shownAt = Date.now();
   assert.equal(await closesWithin(3500), true, "it goes away by itself");
-  assert.ok(Date.now() - shownAt > 1500, "not too soon");
+  assert.ok(Date.now() - shownAt > 700, "not too soon (about a second)");
 
   // A tiny notch counts too. Scrolling over the dialog (no Option needed) keeps changing the volume and keeps it up.
   await altWheel(4);
@@ -766,10 +770,10 @@ test("a continuous swipe that opens the dialog keeps changing the volume, by dis
   const { page, tabId } = await openTestPage();
   await page.mouse.move(300, 300);
   const cdp = await context.newCDPSession(page);
-  // 30 events of 20 CSS px (40 device px at this page's 2x scale), about 50 ms apart, Command held: 600 px, so one
+  // 30 events of 20 CSS px (40 device px at this page's 2x scale), about 50 ms apart, Command + Shift held: 600 px, so one
   // step to start and then one per 100 px.
   for (let i = 0; i < 30; i++) {
-    await cdp.send("Input.dispatchMouseEvent", { type: "mouseWheel", x: 300, y: 300, deltaX: 0, deltaY: 40, modifiers: 4 });   // Command held
+    await cdp.send("Input.dispatchMouseEvent", { type: "mouseWheel", x: 300, y: 300, deltaX: 0, deltaY: 40, modifiers: 4 | 8 });   // Command + Shift held
     await wait(16);
   }
   await wait(400);
@@ -785,22 +789,24 @@ test("a continuous swipe that opens the dialog keeps changing the volume, by dis
   await page.close();
 });
 
-test("the scroll key can be changed; Control ignores trackpad pinches", async () => {
+test("the scroll keys are any combination (Command + Shift by default); Control ignores trackpad pinches", async () => {
   const { page, tabId } = await openTestPage();
   await page.mouse.move(300, 300);
   const state = async () => (await send({ type: "state", tabId })).tab;
-  const wheelWith = async (key) => {
-    await page.keyboard.down(key);
+  const wheelWith = async (...keys) => {
+    for (const k of keys) await page.keyboard.down(k);
     await page.mouse.wheel(0, 100);
-    await page.keyboard.up(key);
+    for (const k of keys.reverse()) await page.keyboard.up(k);
     await wait(500);
   };
   const closeDialog = async () => { await page.keyboard.press("Escape"); await until(async () => !(await dialogOpen(page)), 1000); };
 
-  await send({ type: "setSettings", scrollKey: "ctrl" });
-  await settle();
   await wheelWith("Meta");
-  assert.equal(await state(), 100, "Command no longer does it");
+  assert.equal(await state(), 100, "Command alone doesn't, by default (Command + Shift)");
+  await send({ type: "setSettings", scrollKeys: ["ctrl"] });
+  await settle();
+  await wheelWith("Meta", "Shift");
+  assert.equal(await state(), 100, "Command + Shift no longer does it");
   // A pinch: a wheel event with ctrlKey set while the Control key isn't held.
   await page.evaluate(() => document.body.dispatchEvent(new WheelEvent("wheel", { deltaY: 100, ctrlKey: true, bubbles: true, cancelable: true })));
   await wait(500);
@@ -809,13 +815,17 @@ test("the scroll key can be changed; Control ignores trackpad pinches", async ()
   assert.equal(await until(async () => (await state()) === 125, 2000), true, "Control + scroll does");
   await closeDialog();
 
-  await send({ type: "setSettings", scrollKey: "shift" });
+  await send({ type: "setSettings", scrollKeys: ["alt", "ctrl"] });
   await settle();
-  await wheelWith("Shift");
-  assert.equal(await until(async () => (await state()) === 150, 2000), true, "Shift + scroll does");
+  await wheelWith("Control");
+  assert.equal(await state(), 125, "Control alone isn't the combination");
+  await wheelWith("Alt", "Control");
+  assert.equal(await until(async () => (await state()) === 150, 2000), true, "Option + Control + scroll does");
   await closeDialog();
+  await send({ type: "setSettings", scrollKeys: [] });
+  assert.deepEqual((await send({ type: "state", tabId })).settings.scrollKeys, ["alt", "ctrl"], "an empty combination is refused");
 
-  await send({ type: "setSettings", scrollKey: "meta" });
+  await send({ type: "setSettings", scrollKeys: ["shift", "meta"] });
   await send({ type: "setTab", tabId, percent: 100 });
   await page.close();
 });
@@ -837,12 +847,21 @@ test("capture mode's info button explains it without flipping the switch; the sc
   const lines = await popup.locator(".captureInfo p").allTextContents();
   assert.ok(lines.some((l) => l.startsWith("Off:")) && lines.some((l) => l.startsWith("On:")), "Off and On on their own lines");
 
-  assert.equal(await popup.locator('.pick.on').getAttribute("data-key"), "meta", "Command by default");
-  await popup.click('.pick[data-key="alt"]');
+  const on = () => popup.evaluate(() => [...document.querySelectorAll(".pick.on")].map((b) => b.dataset.key));
+  assert.deepEqual(await on(), ["shift", "meta"], "Command + Shift by default");
+  assert.match(await popup.locator(".altScrollHint").textContent(), /hold Shift \+ Command and scroll/);
+  await popup.click('.pick[data-key="alt"]');   // add Option
   await popup.locator('.pick.on[data-key="alt"]').waitFor();
-  assert.equal((await send({ type: "state", tabId })).settings.scrollKey, "alt", "saved");
-  assert.match(await popup.locator(".altScrollHint").textContent(), /Option/);
-  await send({ type: "setSettings", scrollKey: "meta" });
+  assert.deepEqual((await send({ type: "state", tabId })).settings.scrollKeys, ["alt", "shift", "meta"], "saved");
+  assert.match(await popup.locator(".altScrollHint").textContent(), /Option \+ Shift \+ Command .*trackpad only/);
+  await popup.click('.pick[data-key="shift"]');
+  await popup.click('.pick[data-key="meta"]');
+  await popup.locator('.pick.on[data-key="meta"]').waitFor({ state: "detached" });
+  assert.deepEqual(await on(), ["alt"]);
+  await popup.click('.pick[data-key="alt"]');   // the last one stays on
+  await wait(300);
+  assert.deepEqual(await on(), ["alt"], "at least one stays on");
+  await send({ type: "setSettings", scrollKeys: ["shift", "meta"] });
   await popup.close();
   await page.close();
 });
@@ -885,36 +904,36 @@ test("pressing the scroll key during a plain scroll (or its coasting) doesn't ch
   await page.mouse.move(300, 300);
   const cdp = await context.newCDPSession(page);
   const scroll = (deltaY, modifiers) => cdp.send("Input.dispatchMouseEvent", { type: "mouseWheel", x: 300, y: 300, deltaX: 0, deltaY, modifiers });
-  // A flick and its coast: steady scroll events, and Command goes down partway through (modifier 4).
+  // A flick and its coast: steady scroll events, and Command + Shift go down partway through (modifiers 4 | 8).
   for (let i = 0; i < 24; i++) {
-    await scroll(40, i < 10 ? 0 : 4);
+    await scroll(40, i < 10 ? 0 : 4 | 8);
     await wait(30);
   }
   await wait(500);
   assert.equal((await send({ type: "state", tabId })).tab, 100, "volume unchanged");
   assert.equal(await dialogOpen(page), false, "no dialog");
   // After a pause, a scroll that starts with Command held does change it.
-  await scroll(40, 4);
-  assert.equal(await until(async () => (await send({ type: "state", tabId })).tab === 125, 2000), true, "a new Command + scroll works");
+  await scroll(40, 4 | 8);
+  assert.equal(await until(async () => (await send({ type: "state", tabId })).tab === 125, 2000), true, "a new Command + Shift + scroll works");
   await until(() => dialogReady(page), 2000);
   await page.keyboard.press("Escape");
   await send({ type: "setTab", tabId, percent: 100 });
   await page.close();
 });
 
-test("Command+Shift+Minus resets the tab to 100%, on the page or in the dialog; the reset key can be recorded", async () => {
+test("Command+Shift+Delete resets the tab to 100%, on the page or in the dialog; the reset key can be recorded", async () => {
   const { page, tabId } = await openTestPage();
   const state = async () => (await send({ type: "state", tabId })).tab;
   await send({ type: "setTab", tabId, percent: 250 });
   await settle();
-  await page.keyboard.press("Meta+Shift+Minus");
+  await page.keyboard.press("Meta+Shift+Backspace");
   assert.equal(await until(async () => (await state()) === 100, 2000), true, "reset from the page");
   near((await real(tabId)).a, 0.8, "plays at 100%");
   assert.equal(await until(() => dialogReady(page), 2000), true, "the dialog shows the 100% for a moment");
   // In the open dialog: reset without closing it.
   await page.keyboard.press("3");
   assert.equal(await until(async () => (await state()) === 30, 2000), true);
-  await page.keyboard.press("Meta+Shift+Minus");
+  await page.keyboard.press("Meta+Shift+Backspace");
   assert.equal(await until(async () => (await state()) === 100, 2000), true, "reset from the dialog");
   assert.equal(await dialogOpen(page), true, "the dialog stays");
   await page.keyboard.press("Escape");
@@ -924,21 +943,85 @@ test("Command+Shift+Minus resets the tab to 100%, on the page or in the dialog; 
   const popup = await context.newPage();
   await popup.addInitScript(([tabId, url]) => { chrome.tabs.query = async () => [{ id: tabId, url }]; }, [tabId, page.url()]);
   await popup.goto(ext.url());
-  await popup.locator(".resetBtn", { hasText: "⇧⌘−" }).waitFor();
-  assert.equal(await popup.locator('.shortcutBtn[data-setting="shortcut"]').textContent(), "⇧⌘0");
-  await popup.click(".resetBtn");
+  const resetBtn = '.shortcutBtn[data-setting="resetShortcut"]';
+  await popup.locator(resetBtn, { hasText: "⇧⌘⌫" }).waitFor();
+  assert.equal(await popup.locator('.shortcutBtn[data-setting="shortcut"]').textContent(), "⇧⌘End");
+  await popup.click(resetBtn);
   await popup.keyboard.press("Control+Shift+KeyR");
-  await popup.locator(".resetBtn", { hasText: "⌃⇧R" }).waitFor();
-  assert.equal(await popup.locator('.shortcutBtn[data-setting="shortcut"]').textContent(), "⇧⌘0", "the open shortcut is untouched");
+  await popup.locator(resetBtn, { hasText: "⌃⇧R" }).waitFor();
+  assert.equal(await popup.locator('.shortcutBtn[data-setting="shortcut"]').textContent(), "⇧⌘End", "the open shortcut is untouched");
   await popup.close();
   await settle();
   await page.bringToFront();
   await send({ type: "setTab", tabId, percent: 200 });
-  await page.keyboard.press("Meta+Shift+Minus");
+  await page.keyboard.press("Meta+Shift+Backspace");
   await wait(400);
   assert.equal(await state(), 200, "the old reset key no longer resets");
   await page.keyboard.press("Control+Shift+KeyR");
   assert.equal(await until(async () => (await state()) === 100, 2000), true, "the recorded one does");
-  await send({ type: "setSettings", resetShortcut: { code: "Minus", alt: false, ctrl: false, meta: true, shift: true } });
+  await send({ type: "setSettings", resetShortcut: { code: "Backspace", alt: false, ctrl: false, meta: true, shift: true } });
   await page.close();
+});
+
+test("Command+Shift+Up/Down turn the volume up and down a step (holding repeats), shown for about a second", async () => {
+  const { page, tabId } = await openTestPage();
+  const state = async () => (await send({ type: "state", tabId })).tab;
+  await page.keyboard.press("Meta+Shift+ArrowUp");
+  assert.equal(await until(async () => (await state()) === 125, 2000), true, "one step up");
+  assert.equal(await until(() => dialogReady(page), 2000), true, "the dialog shows");
+  // In the dialog the same keys keep working, and each press keeps it up.
+  await page.keyboard.press("Meta+Shift+ArrowUp");
+  assert.equal(await until(async () => (await state()) === 150, 2000), true, "another step, in the dialog");
+  await page.keyboard.press("Meta+Shift+ArrowDown");
+  await page.keyboard.press("Meta+Shift+ArrowDown");
+  assert.equal(await until(async () => (await state()) === 100, 2000), true, "two steps down");
+  const lastChange = Date.now();
+  assert.equal(await until(async () => !(await dialogOpen(page)), 2500), true, "goes away by itself");
+  const after = Date.now() - lastChange;
+  assert.ok(after > 700 && after < 2000, `about a second after the last change (${after} ms)`);
+
+  // Holding the key down: the system repeats it, and every repeat is a step.
+  const cdp = await context.newCDPSession(page);
+  const key = (type, autoRepeat = false) => cdp.send("Input.dispatchKeyEvent",
+    { type, modifiers: 4 | 8, key: "ArrowDown", code: "ArrowDown", windowsVirtualKeyCode: 40, autoRepeat });
+  await key("rawKeyDown");
+  for (let i = 0; i < 3; i++) { await wait(60); await key("rawKeyDown", true); }
+  await key("keyUp");
+  assert.equal(await until(async () => (await state()) === 80, 2000), true, "four steps down while held (100 -> 80)");
+
+  // In a text field Command+Shift+Up/Down select text, so they're left alone there.
+  await until(async () => !(await dialogOpen(page)), 2500);
+  await page.evaluate(() => { const t = document.createElement("textarea"); t.id = "t"; t.value = "one\ntwo"; document.body.append(t); t.focus(); });
+  await page.keyboard.press("Meta+Shift+ArrowUp");
+  await wait(400);
+  assert.equal(await state(), 80, "volume unchanged while typing");
+  assert.equal(await dialogOpen(page), false);
+  await send({ type: "setTab", tabId, percent: 100 });
+  await page.close();
+});
+
+test("the four key boxes are the same width", async () => {
+  const popup = await context.newPage();
+  await popup.addInitScript(() => { chrome.tabs.query = async () => [{ id: 1, url: "https://example.com/" }]; });
+  await popup.goto(ext.url());
+  await popup.locator(".percent").waitFor();
+  const widths = await popup.evaluate(() => [...document.querySelectorAll(".shortcutBtn")].map((b) => Math.round(b.getBoundingClientRect().width)));
+  assert.equal(widths.length, 4);
+  assert.ok(Math.max(...widths) - Math.min(...widths) <= 1, `same width: ${widths.join(", ")}`);
+  await popup.close();
+});
+
+test("in a browser that uses a default key itself, that key falls back to Command+Shift+0 (then 1, 2...)", async () => {
+  const keysOf = async () => (await send({ type: "state", tabId: 0 })).settings;
+  await sw.evaluate(() => chrome.storage.local.remove(["shortcut", "resetShortcut", "upShortcut", "downShortcut"]));   // defaults only
+  assert.equal((await keysOf()).resetShortcut.code, "Backspace", "Arc: the wanted Command+Shift+Delete");
+  await sw.evaluate(() => chrome.storage.local.set({ browser: "chromium" }));   // Chrome uses Command+Shift+Delete
+  const s = await keysOf();
+  assert.equal(s.resetShortcut.code, "Digit0", "reset falls back to Command+Shift+0");
+  assert.deepEqual([s.shortcut.code, s.upShortcut.code, s.downShortcut.code], ["End", "ArrowUp", "ArrowDown"], "the rest stay");
+  // A key the user picked is theirs, in any browser.
+  await send({ type: "setSettings", resetShortcut: { code: "KeyR", alt: false, ctrl: true, meta: false, shift: true } });
+  assert.equal((await keysOf()).resetShortcut.code, "KeyR");
+  await sw.evaluate(() => chrome.storage.local.remove("resetShortcut"));
+  await sw.evaluate(() => chrome.storage.local.set({ browser: "arc" }));
 });

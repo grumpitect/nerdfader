@@ -57,17 +57,5 @@
       "match_about_blank": true,
       "match_origin_as_fallback": true
     }
-  ],
-  "commands": {
-    "_execute_action": {
-      "suggested_key": {
-        "default": "Ctrl+Shift+9",
-        "mac": "Command+Shift+0"
-      },
-      "description": "Open Nerdfader"
-    },
-    "reset-volume": {
-      "description": "Reset the tab's volume to 100%"
-    }
-  }
+  ]
 }

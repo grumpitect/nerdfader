@@ -5,7 +5,7 @@
 **A volume slider for every browser tab, from 0 to 600%.**
 
 Nerdfader is a small, free, open-source browser extension for Arc, Chrome and other Chromium browsers. Click its
-icon (or press ⌘⇧0), and a small dialog opens in the middle of the page over a blurred backdrop. Drag the slider,
+icon (or press ⌘⇧End), and a small dialog opens in the middle of the page over a blurred backdrop. Drag the slider,
 and that tab gets quieter (or louder). Click anywhere outside it, press Esc, or click the icon again to close it.
 Most sites are boosted from inside the page, with no "this tab is being shared" highlight; capture mode is only
 used, with your OK, for the few sites that block that.
@@ -25,37 +25,39 @@ Made for the [Nerdative](https://www.youtube.com/@nerdative) channel on YouTube,
   without permission to process it) can't be boosted from inside the page. For those, Nerdfader offers capture
   mode: once for that tab, or always. It runs only while the tab plays sound: it stops a moment after the tab
   pauses or goes quiet, and starts again when it plays. The ⓘ next to capture_mode in the dialog explains it.
-- **Reset.** One click (or **r** in the dialog, or **⌘⇧−** on any page) puts the tab back to 100%; with all_tabs on,
-  it resets every tab. After ⌘⇧− the dialog shows the 100% for a moment. Record a different reset key in the dialog
-  (**reset_key**).
-- **Opens over the page.** The dialog sits in the page, centered over a blurred backdrop, and shows above fullscreen
-  video too. Its name links here, its version to the release notes. Keys you type in it don't reach the page, so a
-  video player won't also seek. On pages extensions can't touch (`arc://` and `chrome://` pages, the Web Store) the
-  icon opens a regular popup instead.
+- **Reset.** One click (or **r** in the dialog) puts the tab back to 100%; with all_tabs on, it resets every tab.
 - **all_tabs.** Turn it on and one slider sets every tab, including ones you open later. Turn it off and every
   tab goes back to the volume it had before.
 - **Badge.** The toolbar icon shows the tab's volume when it isn't 100%.
-- **Shortcut.** **⌘⇧0** (Ctrl+Shift+9 on Windows and Linux, where Windows often keeps Ctrl+Shift+0 for switching
-  keyboard layouts) opens and closes the dialog. Record your own in the dialog (click the shortcut, press the keys;
-  Delete removes it): it works on any page and inside embedded players. The browser-level shortcut (same default)
-  also works from the address bar; change it at `arc://extensions/shortcuts` (the dialog links there), where you can
-  also give the reset action a browser-level key. The browser only assigns the default on a fresh install, and it
-  doesn't allow + or − in browser-level shortcuts.
-- **Modifier + scroll.** Hold Command (the Windows key elsewhere) and scroll anywhere, with a mouse wheel or two
-  fingers on a trackpad, to change the tab's volume: scrolling down turns it up (with macOS natural scrolling, that's
-  a two-finger swipe up). The dialog shows for a moment and follows along while you keep scrolling; it goes away 2
-  seconds after you stop. Click or type in it and it stays until you click away or press Esc. Pick the key in
-  **scroll_volume**: ⌘ Command (the default), ⌥ Option, ⌃ Control or ⇧ Shift (or turn it off). On a Mac, Option works
-  with a trackpad only (macOS doesn't pass Option + mouse wheel to pages); with a mouse, pick another key. A trackpad
-  pinch never counts as Control + scroll, and a scroll that began without the key (or is still coasting after a
-  flick) never turns into a volume change when you press it. The page doesn't rubber-band while the dialog is up, so a hard swipe at the
-  top or bottom of a page stays with the dialog.
+- **Keys.** On any page (Ctrl instead of ⌘ on Windows and Linux):
+
+  | Keys | Does |
+  |---|---|
+  | **⌘⇧End** | opens and closes the dialog (on a MacBook keyboard, End is fn+→) |
+  | **⌘⇧↑** / **⌘⇧↓** | turns the tab up / down a step (5%, or 25% above 100%); hold to keep going |
+  | **⌘⇧⌫** (Delete) | resets the tab to 100% |
+
+  Louder, quieter and reset show the dialog for a moment, like scrolling. Change any of them under **keys** in the
+  dialog (click one, press the new keys; Delete removes it). In a browser that already uses one of these keys
+  itself, that one starts as ⌘⇧ + a number instead (0, then 1, 2...): Chrome uses ⌘⇧⌫ for "Delete browsing data",
+  so there reset is ⌘⇧0; Arc uses none of them. The keys are Nerdfader's own, handled in the page, so they don't
+  work while the address bar has focus or on pages extensions can't touch (`arc://` pages, the Web Store); the
+  toolbar icon still does. In text fields, ⌘⇧↑/↓/End/⌫ keep editing text as usual.
+- **Modifier + scroll.** Hold Command + Shift (Windows key + Shift elsewhere) and scroll anywhere, with a mouse wheel
+  or two fingers on a trackpad, to change the tab's volume: scrolling down turns it up (with macOS natural scrolling,
+  that's a two-finger swipe up). The dialog shows and follows along while you keep scrolling; it goes away a second
+  after you stop. Click or type in it and it stays until you click away or press Esc. Choose the keys to hold under
+  **scroll_volume**: any combination of ⌥ Option, ⌃ Control, ⇧ Shift and ⌘ Command (at least one), or turn it off.
+  On a Mac, combinations with Option work with a trackpad only (macOS doesn't pass Option + mouse wheel to pages). A
+  trackpad pinch never counts as Control + scroll, and a scroll that began without the keys (or is still coasting
+  after a flick) never turns into a volume change when you press them. The page doesn't rubber-band while the dialog
+  is up, so a hard swipe at the top or bottom of a page stays with the dialog.
 - **Keyboard and mouse wheel in the dialog.** ←/→ change by 5% (25% above 100%; hold Shift for finer steps), **0**
   to **9** jump to 0 to 90%, **r** resets, **c** takes up the capture-mode offer, **Esc** closes, and scrolling over
   the dialog works too. The dialog keeps the keyboard itself, so no control inside it takes focus or shows a focus
   ring (Tab doesn't step through it).
 - **Four-finger gestures?** macOS keeps three- and four-finger trackpad gestures to itself; web pages and extensions
-  never see them. To open Nerdfader with one, map the gesture to ⌘⇧0 in a tool like
+  never see them. To open Nerdfader with one, map the gesture to ⌘⇧End (or ⌘⇧↑ / ⌘⇧↓) in a tool like
   [BetterTouchTool](https://folivora.ai).
 - **The site doesn't notice.** YouTube's own volume slider keeps working and keeps showing its own value;
   Nerdfader scales whatever the site plays.
@@ -122,7 +124,7 @@ settings; tab capture and an offscreen page, for capture mode. Nerdfader sends n
 network code in it.
 
 Volumes live in the browser's extension storage. A tab's own volume lasts until the tab closes or the browser quits;
-the switches, the shortcut and the scroll key are remembered across restarts.
+the switches, the keys and the scroll keys are remembered across restarts.
 
 ## Development
 
@@ -138,25 +140,24 @@ The tests switch the browser's audio output off (pages still play and can be cap
 real output with tab capture, so they're silent.
 
 ```bash
-npm run test:real          # the same in your installed Google Chrome, the way a person uses it (no window)
-npm run test:real:window   # just the browser-level shortcut, which needs a window (briefly, bottom-left corner)
+npm run test:real      # the same in your installed Google Chrome, the way a person uses it (no window)
 ```
 
 `test:real` starts Google Chrome with a throwaway profile and drives it over its debugging protocol, which can load
-the extension and click its toolbar icon for real. It runs twice: once letting pages play sound freely (most tests
-need that), and once with the browser's normal autoplay rule, to check nothing warns before you've clicked a page. It installs 1.0.0 and updates it over open tabs, reloads it while
-tabs play, opens the dialog, uses the shortcut and modifier + scroll, runs capture mode under Chrome's real "only
-after you clicked it on this tab" rule, plays a DRM (ClearKey) stream, and visits YouTube, Vimeo, Facebook and
-Twitch, failing on anything that shows up under Errors in chrome://extensions. Its audio output is off, so it's
-silent, and it never shows a window. The window version covers only the browser-level shortcut, which headless
-Chrome can't (it has no browser UI); release.sh runs both. Set `CHROME` to use another Chromium-based browser.
+the extension and click its toolbar icon for real. It installs 1.0.0 and updates it over open tabs, reloads it while
+tabs play, opens the dialog, uses the keys and modifier + scroll, runs capture mode under Chrome's real "only after
+you clicked it on this tab" rule, plays a DRM (ClearKey) stream, and visits YouTube, Vimeo, Facebook and Twitch,
+failing on anything that shows up under Errors in chrome://extensions. It runs twice: once letting pages play sound
+freely (most tests need that), and once with the browser's normal autoplay rule, to check nothing warns before
+you've clicked a page. Its audio output is off and it runs headless, so it's silent and never shows a window. Set
+`CHROME` to use another Chromium-based browser.
 
 To try a change, load the `extension` folder with **Load unpacked** and click the reload arrow after editing.
 
 - `extension/content/main.js`: runs in the page's world; patches media volume and Web Audio, boosts, and reports
   what it can't boost.
 - `extension/content/bridge.js`: runs in the extension's world; passes the level from the background to the page.
-- `extension/content/input.js`: the in-page shortcut and modifier + scroll (on pages and over the dialog).
+- `extension/content/input.js`: the keys and modifier + scroll (on pages and over the dialog).
 - `extension/background.js`: remembers each tab's volume and the switches, pushes levels to tabs, and decides when
   capture mode runs.
 - `extension/offscreen/`: capture mode's playback, soft clipper and silence detection.

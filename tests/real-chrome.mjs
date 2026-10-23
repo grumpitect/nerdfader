@@ -1,8 +1,7 @@
 // Tests in real Google Chrome, the way a person uses Nerdfader: installed as an unpacked extension, updated and
 // reloaded over open tabs, opened by clicking its toolbar icon, and tried on real sites. `npm run test:real` runs it
-// all headless (no window, never takes focus). `npm run test:real:window` runs only the shortcut test with a window,
-// the one thing headless can't cover (browser-level shortcuts come from the browser's own UI); that window sits in
-// the bottom-left corner, mostly off-screen, and may briefly come to the front.
+// headless (no window, never takes focus). Without HEADLESS=1 it uses a window kept in the background, bottom-left,
+// mostly off-screen, for debugging by eye.
 //
 // Chrome is started with a throwaway profile and driven over its debugging protocol, which can load extensions and
 // click their toolbar icon for real (Extensions.loadUnpacked, Extensions.triggerAction), so capture mode runs under
@@ -280,6 +279,23 @@ test("updating from the 15:36 build Jay had in Arc over a playing tab: no errors
   await player.page.close();
 });
 
+test("updating from 1.1 resets key and scroll choices to the new defaults once, and keeps the other settings", async () => {
+  await install("v1.1.2");
+  await bg(() => chrome.storage.local.remove("keysVersion"));   // 1.1 never wrote it (earlier tests here did)
+  await bg(() => chrome.storage.local.set({
+    shortcut: { code: "Digit0", alt: false, ctrl: false, meta: true, shift: true }, scrollKey: "ctrl", overrideOn: false, overridePercent: 70 }));
+  await install("working tree");
+  const s = (await call({ type: "state", tabId: 0 })).settings;
+  assert.equal(s.shortcut.code, "End", "the open key is the new default");
+  assert.deepEqual(s.scrollKeys, ["shift", "meta"], "the scroll keys are the new default");
+  assert.equal((await bg(() => chrome.storage.local.get("overridePercent"))).overridePercent, 70, "other settings kept");
+  // A choice made with this version stays across reloads.
+  await call({ type: "setSettings", scrollKeys: ["alt"] });
+  await install("working tree");
+  assert.deepEqual((await call({ type: "state", tabId: 0 })).settings.scrollKeys, ["alt"], "kept after that");
+  await call({ type: "setSettings", scrollKeys: ["shift", "meta"] });
+});
+
 test("reloading the extension while tabs play: no errors, tabs keep working", async () => {
   await install("working tree");
   const player = await open(`${origin}/player?src=${other}/tone.wav`);
@@ -332,8 +348,10 @@ test("copying new files into the folder makes the extension reload itself once, 
   near((await realVolume(p.tabId))[0], gain(40), "volume");
   if (headless.length) await p.page.bringToFront();
   await p.page.mouse.move(300, 300);
-  await p.page.keyboard.down("Meta");
-  await p.page.mouse.wheel(0, 100);   // down is louder
+  await p.page.keyboard.down("Meta");   // Command + Shift + scroll; down is louder
+  await p.page.keyboard.down("Shift");
+  await p.page.mouse.wheel(0, 100);
+  await p.page.keyboard.up("Shift");
   await p.page.keyboard.up("Meta");
   assert.equal(await until(async () => (await state(p.tabId)).tab === 45, 2000), true, "Option + scroll on the old tab");
   await p.page.keyboard.press("Escape");
@@ -384,24 +402,32 @@ test("the toolbar icon opens the dialog quickly, keys stay in it, and it closes 
   await p.page.close();
 });
 
-test("shortcuts: the browser shortcut is registered, the page shortcut toggles the dialog, Option + scroll shows it for a moment", async () => {
-  // Chrome assigns an extension's default browser shortcut on a fresh install only (not when an update adds it).
-  if (id) await cdp.send("Extensions.uninstall", { id });
+test("Chrome is told apart from Arc: a page load reports it, and the reset key falls back to Command+Shift+0", async () => {
   await install("working tree");
-  // Chrome assigns the suggested browser-level shortcut on a fresh install; the reset action has none (browser-level
-  // shortcuts can't use -), but is listed for the user to set.
-  assert.equal((await call({ type: "state", tabId: 0 })).browserShortcut, "⇧⌘0", "browser-level shortcut on a fresh install");
-  const commands = await bg(async () => (await chrome.commands.getAll()).map((c) => c.name).sort());
-  assert.deepEqual(commands, ["_execute_action", "reset-volume"]);
+  await bg(() => chrome.storage.local.remove(["browser", "resetShortcut"]));
+  assert.equal((await call({ type: "state", tabId: 0 })).settings.resetShortcut.code, "Backspace", "the wanted default until known");
+  const p = await open(`${origin}/player`);
+  assert.equal(await until(async () => (await bg(() => chrome.storage.local.get("browser"))).browser === "chromium", 8000), true,
+    "a page in Chrome reports it isn't Arc");
+  assert.equal((await call({ type: "state", tabId: 0 })).settings.resetShortcut.code, "Digit0", "reset is Command+Shift+0 here");
+  await p.page.close();
+});
+
+test("shortcuts: none at browser level; the page shortcuts open, close and reset; modifier + scroll shows it for a moment", async () => {
+  await install("working tree");
+  await bg(() => chrome.storage.local.set({ browser: "arc" }));   // the wanted defaults (Chrome's are tested above)
+  // All shortcuts are Nerdfader's own (the browser's shortcuts page would show ones the dialog can't change).
+  // (With none declared, the browser doesn't even give the extension its shortcuts API.)
+  assert.deepEqual(await bg(async () => (chrome.commands ? (await chrome.commands.getAll()).map((c) => c.name) : [])), [], "no browser-level shortcuts");
   const p = await open(`${origin}/player?src=/tone.wav`);
-  await p.page.keyboard.press("Meta+Shift+Digit0");
+  await p.page.keyboard.press("Meta+Shift+End");
   assert.equal(await until(async () => (await dialog(p.page)) === "ready", 3000), true, "page shortcut opens");
-  await p.page.keyboard.press("Meta+Shift+Digit0");
+  await p.page.keyboard.press("Meta+Shift+End");
   assert.equal(await until(async () => (await dialog(p.page)) === "closed", 1000), true, "and closes");
 
-  // Command + Shift + Minus resets the tab to 100%.
+  // Command + Shift + Delete resets the tab to 100%.
   await call({ type: "setTab", tabId: p.tabId, percent: 250 });
-  await p.page.keyboard.press("Meta+Shift+Minus");
+  await p.page.keyboard.press("Meta+Shift+Backspace");
   assert.equal(await until(async () => (await state(p.tabId)).tab === 100, 2000), true, "reset shortcut");
   await until(async () => (await dialog(p.page)) === "ready", 2000);
   await p.page.keyboard.press("Escape");
@@ -410,7 +436,7 @@ test("shortcuts: the browser shortcut is registered, the page shortcut toggles t
   // Held down: macOS repeats the keys about every 35 ms after half a second. The dialog stays; a new press closes it.
   const keys = await ctx.newCDPSession(p.page);
   const key = (type, autoRepeat = false) =>
-    keys.send("Input.dispatchKeyEvent", { type, modifiers: 4 | 8, key: ")", code: "Digit0", windowsVirtualKeyCode: 48, autoRepeat });
+    keys.send("Input.dispatchKeyEvent", { type, modifiers: 4 | 8, key: "End", code: "End", windowsVirtualKeyCode: 35, autoRepeat });
   await key("rawKeyDown");
   await wait(450);
   for (let i = 0; i < 15; i++) { await key("rawKeyDown", true); await wait(35); }
@@ -422,8 +448,10 @@ test("shortcuts: the browser shortcut is registered, the page shortcut toggles t
   assert.equal(await until(async () => (await dialog(p.page)) === "closed", 1000), true, "a new press closes it");
 
   await p.page.mouse.move(300, 300);
-  await p.page.keyboard.down("Meta");
-  await p.page.mouse.wheel(0, 100);   // down is louder
+  await p.page.keyboard.down("Meta");   // Command + Shift + scroll; down is louder
+  await p.page.keyboard.down("Shift");
+  await p.page.mouse.wheel(0, 100);
+  await p.page.keyboard.up("Shift");
   await p.page.keyboard.up("Meta");
   assert.equal(await until(async () => (await state(p.tabId)).tab === 125, 2000), true, "Option + scroll: one step");
   assert.equal(await until(async () => (await dialog(p.page)) === "ready", 2000), true, "dialog shows");
@@ -543,7 +571,9 @@ test("with the browser's normal autoplay rule, boosting and holding the scroll k
   // Holding the scroll key and scrolling, pressing Esc and Shift: none of these count as a click.
   await p.page.mouse.move(300, 300);
   await p.page.keyboard.down("Meta");
+  await p.page.keyboard.down("Shift");
   await p.page.mouse.wheel(0, 100);
+  await p.page.keyboard.up("Shift");
   await p.page.keyboard.up("Meta");
   await p.page.keyboard.press("Escape");
   await p.page.keyboard.press("Shift");

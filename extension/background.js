@@ -24,22 +24,49 @@ const clamp = (p) => Math.round(Math.min(MAX, Math.max(0, Number(p) || 0)));
 const toPercent = (pos) => (pos <= 100 ? pos : 100 + (pos - 100) * 5);
 const toPos = (p) => (p <= 100 ? p : 100 + (p - 100) / 5);
 
-// The in-page shortcuts (content/input.js), stored as the key's code and modifiers. Command + Shift + 0 opens the
-// dialog (no clash with macOS, Chrome or Arc; Ctrl + Shift + 9 elsewhere, since Windows often keeps Ctrl + Shift + 0
-// for switching keyboard layouts), the same as the browser-level shortcut in manifest.json. Command + Shift + Minus
-// resets the tab to 100% (Ctrl off a Mac); browser-level shortcuts can't use -, so that one only has a page default.
-// Scrolling changes the volume with Command (Windows key elsewhere) held by default. Choices the user made are kept.
+// The keyboard shortcuts, handled in every page by content/input.js (there are no browser-level ones: those can't be
+// set by an extension, so they'd drift from what the dialog shows). Stored as the key's code and modifiers, all with
+// Command + Shift (Ctrl + Shift off a Mac): End opens the dialog, Delete (the Backspace key) resets the tab to 100%,
+// Up and Down turn it up and down a step. (Chrome's own "Delete browsing data" is also Command + Shift + Delete;
+// Arc has nothing there.) Scrolling changes the volume with Command + Shift (Windows key + Shift elsewhere) held. Only
+// defaults: choices the user made are kept.
+const SHORTCUTS = { shortcut: "End", resetShortcut: "Backspace", upShortcut: "ArrowUp", downShortcut: "ArrowDown" };
+// Defaults the browser itself already uses get Command + Shift + a number instead, in order: 0, 1, 2... (1, 2, 3...
+// off a Mac, where Windows often keeps Ctrl + Shift + 0). Arc uses none of them (checked against its menus); Chrome
+// (and, as far as we know, other Chromium browsers) uses Command/Ctrl + Shift + Delete for "Delete browsing data".
+// Which browser this is comes from the pages (content/input.js): Arc adds its theme colors to every page.
+const TAKEN_BY_BROWSER = { arc: [], chromium: ["resetShortcut"] };
+// Version 1.2 changed the keys (End opens, Up/Down added, scroll keys became a combination), so key and scroll
+// choices saved by an older version are cleared once and everything starts from the new defaults. Volumes and the
+// other switches are kept.
+const KEYS_VERSION = 2;
+let keysUpgraded = null;
+function upgradeKeys() {
+  keysUpgraded ??= (async () => {
+    const { keysVersion = 1 } = await chrome.storage.local.get("keysVersion");
+    if (keysVersion >= KEYS_VERSION) return;
+    await chrome.storage.local.remove([...Object.keys(SHORTCUTS), "altScroll", "scrollKey", "scrollKeys"]);
+    await chrome.storage.local.set({ keysVersion: KEYS_VERSION });
+  })().catch(() => {});
+  return keysUpgraded;
+}
+
 async function settings() {
+  await upgradeKeys();
   const mac = (await chrome.runtime.getPlatformInfo()).os === "mac";
   const keys = (code) => ({ code, shift: true, meta: mac, ctrl: !mac, alt: false });
-  const { shortcut = keys(mac ? "Digit0" : "Digit9"), resetShortcut = keys("Minus"), altScroll = true, scrollKey = "meta" } =
-    await chrome.storage.local.get(["shortcut", "resetShortcut", "altScroll", "scrollKey"]);
-  return { shortcut, resetShortcut, altScroll, scrollKey };
-}
-// The browser-level shortcut for opening Nerdfader as the browser shows it (for example "⇧⌘0"), or "" when none is set.
-async function browserShortcut() {
-  const commands = await chrome.commands.getAll();
-  return commands.find((c) => c.name === "_execute_action")?.shortcut ?? "";
+  const stored = await chrome.storage.local.get([...Object.keys(SHORTCUTS), "altScroll", "scrollKeys", "scrollKey", "browser"]);
+  // Until a page has told which browser this is, the defaults are the wanted ones.
+  const taken = TAKEN_BY_BROWSER[stored.browser] ?? [];
+  let number = mac ? 0 : 1;
+  const defaults = Object.fromEntries(Object.entries(SHORTCUTS).map(([name, code]) =>
+    [name, keys(taken.includes(name) ? `Digit${number++}` : code)]));
+  // The keys to hold while scrolling: any combination of "alt", "ctrl", "shift" and "meta", at least one. (Versions
+  // before 1.2 kept a single key as scrollKey.)
+  const scrollKeys = stored.scrollKeys ?? (stored.scrollKey ? [stored.scrollKey] : ["shift", "meta"]);
+  const result = { altScroll: stored.altScroll ?? true, scrollKeys };
+  for (const name of Object.keys(SHORTCUTS)) result[name] = stored[name] === undefined ? defaults[name] : stored[name];
+  return result;
 }
 
 const key = {
@@ -157,7 +184,6 @@ async function state(tabId) {
   const info = await tabInfo(tabId);
   return {
     settings: await settings(),
-    browserShortcut: await browserShortcut(),
     tab: info.own,
     override: info.override,
     status: info.status,
@@ -223,7 +249,7 @@ const handlers = {
   },
   // From a page (content/input.js): the shortcut was pressed, or Option/Alt + scroll moved the volume by some steps.
   async toggle(_msg, sender) {
-    await openPanel(sender.tab, { source: "shortcut" });
+    await openPanel(sender.tab);
   },
   // The reset shortcut: back to 100% (every tab's volume, while all_tabs is on), with the dialog shown for a moment.
   async resetTab(_msg, sender) {
@@ -245,22 +271,30 @@ const handlers = {
     return next;
   },
   getSettings: () => settings(),
-  // From the panel: the in-page shortcut (null for none), whether modifier + scroll changes the volume, and which
-  // modifier ("alt", "ctrl", "shift" or "meta").
+  // From a page: whether this browser is Arc. Once a page has seen Arc, it stays Arc.
+  async browserIs(msg) {
+    const { browser } = await chrome.storage.local.get("browser");
+    const next = msg.arc || browser === "arc" ? "arc" : "chromium";
+    if (next === browser) return;
+    await chrome.storage.local.set({ browser: next });
+    await noteLoad({ browser: next });
+    const now = await settings();
+    for (const tab of await chrome.tabs.query({})) chrome.tabs.sendMessage(tab.id, { type: "settings", settings: now }).catch(() => {});
+  },
+  // From the panel: the shortcuts (each null for none), whether modifier + scroll changes the volume, and which
+  // modifiers to hold for it (scrollKeys: any of "alt", "ctrl", "shift", "meta", at least one).
   async setSettings(msg) {
     const change = {};
-    if (msg.shortcut !== undefined) change.shortcut = msg.shortcut;
-    if (msg.resetShortcut !== undefined) change.resetShortcut = msg.resetShortcut;
+    for (const name of Object.keys(SHORTCUTS)) if (msg[name] !== undefined) change[name] = msg[name];
     if (typeof msg.altScroll === "boolean") change.altScroll = msg.altScroll;
-    if (["alt", "ctrl", "shift", "meta"].includes(msg.scrollKey)) change.scrollKey = msg.scrollKey;
+    if (Array.isArray(msg.scrollKeys)) {
+      const keys = ["alt", "ctrl", "shift", "meta"].filter((k) => msg.scrollKeys.includes(k));
+      if (keys.length) change.scrollKeys = keys;   // at least one stays on
+    }
     await chrome.storage.local.set(change);
     const next = await settings();
     for (const tab of await chrome.tabs.query({})) chrome.tabs.sendMessage(tab.id, { type: "settings", settings: next }).catch(() => {});
     return state(msg.tabId);
-  },
-  // From the panel: open the browser's shortcuts page (chrome:// links can't be opened from a page).
-  async openShortcuts() {
-    await chrome.tabs.create({ url: "chrome://extensions/shortcuts" });
   },
   // From the offscreen page.
   async captureIdle(msg) {
@@ -281,7 +315,7 @@ chrome.runtime.onMessage.addListener((msg, sender, reply) => {
   if (msg?.target === "offscreen") return false;
   const handler = handlers[msg?.type];
   if (!handler) return false;
-  if (["hello", "status", "toggle", "nudge", "resetTab"].includes(msg.type) && !sender.tab) return false;
+  if (["hello", "status", "toggle", "nudge", "resetTab", "browserIs"].includes(msg.type) && !sender.tab) return false;
   if (msg.tabId === undefined && sender.tab) msg.tabId = sender.tab.id;   // the in-page dialog doesn't know its tab id
   handler(msg, sender).then(reply, (err) => reply({ error: String(err) }));
   return true;   // reply arrives asynchronously
@@ -291,31 +325,13 @@ chrome.runtime.onMessage.addListener((msg, sender, reply) => {
 // popup instead: it is set for that tab and opened, or opens on the next click where opening it directly isn't
 // supported.
 const nudges = new Map();   // tabId -> the last volume nudge, so the next one waits for it
-// One key press of the default shortcut reaches both the browser shortcut (as an icon click) and the page's own
-// shortcut, some time apart. Each one pairs with an unpaired press from the other source within 600 ms and is then
-// ignored, so the dialog doesn't open and close at once; a second press of the same kind still closes it.
-const presses = new Map();   // tabId -> { action: { at, paired }, shortcut: { at, paired } }
-function duplicate(tabId, source) {
-  const now = Date.now();
-  const seen = presses.get(tabId) ?? {};
-  const other = seen[source === "action" ? "shortcut" : "action"];
-  presses.set(tabId, seen);
-  if (other && !other.paired && now - other.at < 600) {
-    other.paired = true;
-    seen[source] = { at: now, paired: true };
-    return true;
-  }
-  seen[source] = { at: now, paired: false };
-  return false;
-}
-// { moment: true } shows it for a moment (Option/Alt + scroll), or keeps it up if it is already showing.
-// { source: "shortcut" } is the page's own shortcut; anything else came through the icon or the browser shortcut.
-async function openPanel(tab, { moment = false, source = "action" } = {}) {
+// { moment: true } shows it for a moment (modifier + scroll, the reset shortcut), or keeps it up if it is already
+// showing; otherwise it opens the dialog, or closes it if it is open.
+async function openPanel(tab, { moment = false } = {}) {
   reloadIfFilesChanged();
-  if (!moment) {
-    if (duplicate(tab.id, source)) return;
-    reconcile(tab.id, { opened: true });   // clicking the icon is what allows capture mode on this tab
-  }
+  // Opening it lets capture mode run on this tab, but only from the toolbar icon: the browser counts that (not the
+  // in-page shortcut) as the user invoking the extension, and asks for it before capturing.
+  if (!moment) reconcile(tab.id, { opened: true });
   const target = { tabId: tab.id };
   try {
     await chrome.scripting.executeScript({ target, func: (moment) => { globalThis.__nerdfaderOpen = { moment }; }, args: [moment] });
@@ -334,12 +350,6 @@ async function resetVolume(tab) {
   else await handlers.setTab({ tabId: tab.id, percent: DEFAULT });
   openPanel(tab, { moment: true });
 }
-// The browser-level "reset" shortcut, if the user gave it one in the browser's shortcuts page.
-chrome.commands.onCommand.addListener(async (command, tab) => {
-  if (command !== "reset-volume") return;
-  tab ??= (await chrome.tabs.query({ active: true, lastFocusedWindow: true }))[0];
-  if (tab) resetVolume(tab);
-});
 
 // A tab that went quiet in capture mode starts capturing again when it plays.
 chrome.tabs.onUpdated.addListener(async (tabId, change) => {
@@ -351,7 +361,6 @@ chrome.tabs.onUpdated.addListener(async (tabId, change) => {
 });
 
 chrome.tabs.onRemoved.addListener(async (tabId) => {
-  presses.delete(tabId);
   clearTimeout(stopTimers.get(tabId));
   stopTimers.delete(tabId);
   await stopCapture(tabId).catch(() => {});
