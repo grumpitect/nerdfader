@@ -2,12 +2,15 @@
 // removes it from the page again. Kept apart from main.js so the tests can run it on its own (tests/voice.test.js):
 // - outputStage(): what routed sound goes through on its way to the speakers: the tab's level, voice fix, and a soft
 //   clipper.
+// - shapeJudge(): tells whether left and right differ (to mix them to mono) and whether the low end is heavy.
 // - humDetector(): tells whether what is playing has mains hum at 50 or 60 Hz.
 // - stableVolumeCounter(): undoes most of YouTube's Stable Volume, for when the player won't turn it off (main.js).
 //
-// Voice fix is for badly recorded talks: the voice in one ear, mains hum, a boomy low end. When it is on, the sound
-// is mixed to mono (both sides at 0.7071, so a voice heard in one ear comes out of both), everything below 80 Hz is
-// cut, 200 Hz is turned down 4 dB, and once hum is found, narrow notches remove it: the 3rd harmonic, and every odd
+// Voice fix is for badly recorded talks: the voice in one ear, mains hum, a boomy low end. It listens first and fixes
+// only what it finds (shapeJudge() and humDetector()), so a talk that is already fine passes as it is:
+// - left and right differ (two mics, or the voice in one ear): mixed to mono, at a gain that keeps it as loud as it
+//   was, with less boom: everything below 80 Hz cut and 200 Hz turned down 4 dB (also when the low end is heavy);
+// - mains hum: narrow notches remove it: the 3rd harmonic, and every odd
 // harmonic from 500 to 6000 Hz (for 60 Hz: 180, 540, 660 ... 5940 Hz). The 5th and 7th (250 to 450 Hz) are left
 // alone: they sit in the body of the voice. Up to 2000 Hz the notches have a Q of 30; above that they are 20 Hz wide,
 // so the many notches up there take little of the voice (about 1 dB of 2 to 6 kHz). Mains hum is rarely exactly 50
@@ -34,20 +37,21 @@ globalThis[Symbol.for("nerdfader.voice")] = (() => {
     return curve;
   })();
 
-  // A gain stage in front of a context's speakers. Above 100% (and while voice fix is on, whose mono mix can reach
-  // past full scale), a soft clipper sits after it: below 60% of full scale the sound passes unchanged, above that
+  // A gain stage in front of a context's speakers. Above 100% (counting voice fix's mono mix, which can turn the sound
+  // up a little), a soft clipper sits after it: below 60% of full scale the sound passes unchanged, above that
   // peaks are rounded off smoothly towards a 97% ceiling instead of being chopped off. That keeps nearly all of a
   // boost on audio that is already loud (a limiter or compressor gives most of it back) without the crackle of plain
   // clipping. The shaper's input range is -1..1, so the signal is scaled down by 8 on the way in (600% of a
   // full-scale signal is 6).
   //
-  //   input (level) ─┬─ dry ──────────────────────────────────────────────────────────────┬─ out ─ speakers,
-  //                  └─ mono ─ highpass ─ peaking ─ 56 notch slots ─ lookahead ─ counter ─ wet ┘   or the clipper
+  //   input (level) ─┬─ dry ────────────────────────────────────────────────────────────────────┬─ out ─ speakers,
+  //                  └─ (mono) ─ highpass ─ peaking ─ 56 notch slots ─ lookahead ─ counter ─ wet ┘   or the clipper
   //
-  // lookahead and counter are for stableVolumeCounter(): no delay and no change unless it runs.
+  // Each part of the wet path is flat until voice fix finds what it is for; lookahead and counter are for
+  // stableVolumeCounter(): no delay and no change unless it runs.
   //
-  // Voice fix crossfades dry to wet over 50 ms. The notch slots start flat (peaking at 0 dB, which changes nothing)
-  // and become notches once hum is found. connect and disconnect are the browser's own (main.js patches them).
+  // Voice fix crossfades dry to wet over 50 ms, once it has found something to fix. The notch slots start flat
+  // (peaking at 0 dB, which changes nothing) and become notches once hum is found. connect and disconnect are the browser's own (main.js patches them).
   // A stage handed over by an earlier copy of the scripts keeps its input node, which the page's sound is already
   // routed into, and everything after it is built anew.
   function outputStage(ctx, { connect, disconnect }, input = null) {
@@ -69,22 +73,17 @@ globalThis[Symbol.for("nerdfader.voice")] = (() => {
     connect.call(clipper, ctx.destination);
     connect.call(out, ctx.destination);
 
-    let wanted = adopted ? input.gain.value : 1, voiceOn = false, family = null, pitch = null, wet = null, slots = null;
+    let wanted = adopted ? input.gain.value : 1, voiceOn = false, family = null, pitch = null;
+    let shape = { mono: false, mixDb: 0, boom: false };
+    let wet = null, highpass = null, peaking = null, slots = null;
     let lookahead = null, counter = null, meter = null, counterDb = 0;
-    // Built the first time voice fix is turned on.
+    // Built the first time voice fix has something to fix.
     const wetPath = () => {
       if (wet) return;
-      const highpass = ctx.createBiquadFilter();
-      highpass.channelCount = 1;   // the browser mixes left and right in equally: 0.5 (L + R)
-      highpass.channelCountMode = "explicit";
-      highpass.type = "highpass";
-      highpass.frequency.value = 80;
-      highpass.Q.value = -3.01;   // in dB for this type: Butterworth
-      const peaking = ctx.createBiquadFilter();
-      peaking.type = "peaking";
+      highpass = ctx.createBiquadFilter();
+      peaking = ctx.createBiquadFilter();
       peaking.frequency.value = 200;
       peaking.Q.value = 1;
-      peaking.gain.value = -4;
       slots = Array.from({ length: SLOTS }, () => {
         const f = ctx.createBiquadFilter();
         f.type = "peaking";
@@ -96,12 +95,37 @@ globalThis[Symbol.for("nerdfader.voice")] = (() => {
       wet = ctx.createGain();
       wet.gain.value = 0;
       [input, highpass, peaking, ...slots, lookahead, counter, wet, out].reduce((a, b) => (connect.call(a, b), b));
+      setChannels();
+      setBoom();
       setFamily(family, pitch);
     };
+    // Mono: the browser mixes left and right in equally, 0.5 (L + R). Otherwise the filters keep the stereo.
+    const setChannels = () => {
+      highpass.channelCount = shape.mono ? 1 : 2;
+      highpass.channelCountMode = shape.mono ? "explicit" : "max";
+    };
+    // Less boom: 80 Hz high-pass (Butterworth: this type takes Q in dB) and 200 Hz down 4 dB. Otherwise both are flat
+    // (a peaking filter at 0 dB changes nothing).
+    const setBoom = () => {
+      if (shape.boom) {
+        highpass.type = "highpass";
+        highpass.frequency.value = 80;
+        highpass.Q.value = -3.01;
+      } else {
+        highpass.type = "peaking";
+        highpass.gain.value = 0;
+      }
+      peaking.type = "peaking";
+      peaking.gain.value = shape.boom ? -4 : 0;
+    };
+    // Voice fix plays the wet path only once it has found something to fix; until then, and when there is nothing,
+    // the sound passes as it is.
+    const active = () => voiceOn && (shape.mono || shape.boom || !!family);
+    const mix = () => (shape.mono ? 10 ** (shape.mixDb / 20) : 1);
 
     let clipping = false, unclip = 0;
     const route = (now) => {
-      const need = wanted > 1 || voiceOn;
+      const need = wanted * (active() ? mix() : 1) > 1;
       clearTimeout(unclip);
       if (need === clipping) return;
       // Leaving the clipper waits for a glide down to finish, so nothing passes full scale on the direct path.
@@ -117,6 +141,14 @@ globalThis[Symbol.for("nerdfader.voice")] = (() => {
       param.setValueAtTime(param.value, ctx.currentTime);
       param.linearRampToValueAtTime(value, ctx.currentTime + 0.05);   // 50 ms, no clicks while dragging
     };
+    // Crossfades between the sound as it is and voice fix's version.
+    const apply = (glide) => {
+      const on = active();
+      if (on) wetPath();
+      to(dry.gain, on ? 0 : 1, glide);
+      if (wet) to(wet.gain, on ? mix() : 0, glide);
+      route(!glide);
+    };
 
     const set = (value, glide = true) => {
       wanted = value;
@@ -124,29 +156,38 @@ globalThis[Symbol.for("nerdfader.voice")] = (() => {
       route(!glide);
     };
     const setVoice = (on, glide = true) => {
-      if (on) wetPath();
       voiceOn = on;
-      to(dry.gain, on ? 0 : 1, glide);
-      if (wet) to(wet.gain, on ? Math.SQRT2 : 0, glide);   // √2: the mono mix as loud as the stereo it replaces
-      route(!glide);
+      apply(glide);
     };
+    // What shapeJudge() found: { mono, mixDb (the mono mix's gain, so it is as loud as the stereo was), boom }.
+    function setShape(next, glide = true) {
+      const channels = !!next.mono !== shape.mono;
+      shape = { mono: !!next.mono, mixDb: next.mixDb ?? 0, boom: !!next.boom };
+      if (wet) {
+        if (channels) setChannels();
+        setBoom();
+      }
+      apply(glide);
+    }
     // Hum at 50 or 60 Hz, at its measured pitch, or null for none: retypes the slots at once, so main.js calls it
     // while the sound is quiet.
     function setFamily(next, nextPitch = next) {
       family = next;
       pitch = nextPitch;
-      if (!slots) return;
-      const set = family ? notches(family, pitch ?? family) : [];
-      slots.forEach((f, i) => {
-        if (i < set.length) {
-          f.type = "notch";
-          f.frequency.value = set[i].frequency;
-          f.Q.value = set[i].Q;
-        } else {
-          f.type = "peaking";
-          f.gain.value = 0;
-        }
-      });
+      if (slots) {
+        const set = family ? notches(family, pitch ?? family) : [];
+        slots.forEach((f, i) => {
+          if (i < set.length) {
+            f.type = "notch";
+            f.frequency.value = set[i].frequency;
+            f.Q.value = set[i].Q;
+          } else {
+            f.type = "peaking";
+            f.gain.value = 0;
+          }
+        });
+      }
+      if (wet || active()) apply(true);
     }
     // Stable Volume's counter: on, it returns a meter of the sound just before the 30 ms lookahead, so changes in
     // level are seen before they are heard; counterTo() then sets the counter's gain (in dB): down quickly as the
@@ -168,7 +209,7 @@ globalThis[Symbol.for("nerdfader.voice")] = (() => {
       counterDb = db;
     }
     set(wanted, false);
-    return { input, set, setVoice, setFamily, setCounter, counterTo };
+    return { input, set, setVoice, setShape, setFamily, setCounter, counterTo };
   }
 
   // Finds mains hum in the frames it is given: the spectrum (dB per bin, as an AnalyserNode with smoothing 0 gives
@@ -181,12 +222,14 @@ globalThis[Symbol.for("nerdfader.voice")] = (() => {
   // surroundings and the other family has at most 1 (harmonics within 12 Hz of one of the other family's, like
   // 540 and 550 Hz, are not counted for either). Music rarely does that: its notes aren't on either grid for long.
   //
-  // frame() returns null until there is an answer: 50 or 60 once lockAfter seconds of counted frames show hum,
-  // "none" if giveUpAfter seconds don't. With hum found, pitch is its exact fundamental, measured from where its
+  // frame() returns null until there is an answer: 50 or 60 once lockAfter seconds of counted frames show hum (from
+  // 2 s when it is unmistakable), "none" once noneAfter seconds show nothing like it, or giveUpAfter seconds don't
+  // settle it. With hum found, pitch is its exact fundamental, measured from where its
   // harmonics' peaks sit in those quiet frames (between bins, by fitting a parabola to the three around each peak;
   // the higher harmonics weigh most). quietLevel is the loudness of the quietest 30% (for main.js: a moment quiet
   // enough to change the filters in).
-  function humDetector({ sampleRate, fftSize, frameSeconds = 0.1, lockAfter = 6, giveUpAfter = 60 }) {
+  function humDetector({ sampleRate, fftSize, frameSeconds = 0.1, lockAfter = 6, giveUpAfter = 60, noneAfter = 15 }) {
+    const earlyAfter = Math.min(2, lockAfter);
     const binHz = sampleRate / fftSize;
     const candidates = [];
     for (const family of [50, 60]) for (let h = 3; h <= 33; h += 2) candidates.push({ family, h, freq: family * h });
@@ -219,23 +262,32 @@ globalThis[Symbol.for("nerdfader.voice")] = (() => {
       });
       frames.push({ rms, prominence, at });
       const seconds = frames.length * frameSeconds;
-      if (seconds < lockAfter) return null;
+      if (seconds < earlyAfter) return null;
 
       const quiet = [...frames].sort((a, b) => a.rms - b.rms).slice(0, Math.max(1, Math.ceil(frames.length * 0.3)));
       detector.quietLevel = quiet[quiet.length - 1].rms;
-      const found = { 50: [], 60: [] };
+      const found = { 50: [], 60: [] }, strong = { 50: 0, 60: 0 }, faint = { 50: 0, 60: 0 };
       candidates.forEach((c, k) => {
         if (!c.counts) return;
         let sum = 0;
         for (const f of quiet) sum += f.prominence[k];
-        if (sum / quiet.length >= 6) found[c.family].push(k);
+        const mean = sum / quiet.length;
+        if (mean >= 6) found[c.family].push(k);
+        if (mean >= 9) strong[c.family]++;
+        if (mean >= 4) faint[c.family]++;
       });
       for (const [family, other] of [[60, 50], [50, 60]]) {
-        if (found[family].length >= 3 && found[other].length <= 1) {
+        // Before lockAfter, only hum that is already unmistakable: 4 harmonics 9 dB out, none of the other family.
+        const sure = seconds >= lockAfter ? found[family].length >= 3 && found[other].length <= 1
+          : strong[family] >= 4 && found[other].length === 0;
+        if (sure) {
           detector.pitch = measurePitch(found[family], quiet, family);
           return family;
         }
       }
+      // No hum is clear sooner than hum: after noneAfter seconds, when neither family has even 3 harmonics 4 dB out
+      // (talks with hum have 8 or 9 by then, clean ones 0 or 1).
+      if (seconds >= noneAfter && faint[50] < 3 && faint[60] < 3) return "none";
       return seconds >= giveUpAfter ? "none" : null;
     }
     // The fundamental that best fits the harmonics' peaks (least squares through zero: h × pitch ≈ peak), from the
@@ -255,6 +307,41 @@ globalThis[Symbol.for("nerdfader.voice")] = (() => {
       return Math.abs(pitch - family) <= 0.5 ? pitch : family;
     }
     return detector;
+  }
+
+  // Judges the recording from frames of what plays (one per frameSeconds): its level (dBFS); the mean squares of left,
+  // right, and the side (L - R) / 2 and mid (L + R) / 2; and the power of the low end (160 to 320 Hz) and of the
+  // voice's core (1 to 4 kHz). From the louder half of lockAfter seconds of frames above -60 dBFS (the talking):
+  // - mono when left and right differ: they don't move together (the side is more than a tenth of the mid, as with two
+  //   mics in a room), or one is 1.5 dB or more louder (the voice in one ear). Identical channels stay as they are.
+  // - mixDb: the mono mix's gain to be as loud as the two channels were: 3 dB for unrelated channels, 0 for identical.
+  // - boom: with mono (the room and mics that need it), or when the low end is within 2 dB of the voice's core (a
+  //   clean recording of a voice is 3 to 5 dB below).
+  // Returns null until it has heard enough (1.5 s when it is plain, otherwise lockAfter), then { mono, mixDb, boom }.
+  function shapeJudge({ frameSeconds = 0.1, lockAfter = 6 } = {}) {
+    const frames = [], earlyAfter = Math.min(1.5, lockAfter);
+    return (f) => {
+      if (!(f.level > -60)) return null;
+      frames.push(f);
+      const seconds = frames.length * frameSeconds;
+      if (seconds < earlyAfter) return null;
+      const levels = frames.map((x) => x.level).sort((a, b) => a - b), median = levels[Math.floor(levels.length / 2)];
+      let l = 0, r = 0, mid = 0, side = 0, low = 0, core = 0;
+      for (const x of frames) {
+        if (x.level < median) continue;
+        l += x.l; r += x.r; mid += x.mid; side += x.side; low += x.low; core += x.core;
+      }
+      const apart = side / mid, imbalance = Math.abs(10 * Math.log10(l / r)), lowEnd = 10 * Math.log10(low / core);
+      // Before lockAfter, only when it is plain: left and right far apart (two mics: 0.5 and up), or identical with a
+      // low end clearly not heavy (an intro's music can be, for a moment).
+      const plain = apart > 0.3 || imbalance > 6 || (apart < 0.02 && imbalance < 0.5 && lowEnd < -4);
+      if (seconds < lockAfter && !plain) return null;
+      const together = mid > 0 && apart < 0.1;
+      const mono = !together || !(imbalance < 1.5);
+      const mixDb = Math.min(3, Math.max(0, 10 * Math.log10((mid + side) / mid)));
+      const boom = mono || lowEnd > -2;
+      return { mono, mixDb: mono ? mixDb : 0, boom };
+    };
   }
 
   // YouTube's Stable Volume lifts quiet moments towards the voice: measured on a talk, by how far below the voice
@@ -288,5 +375,5 @@ globalThis[Symbol.for("nerdfader.voice")] = (() => {
     };
   }
 
-  return { outputStage, humDetector, notches, stableVolumeCounter, softClipCurve, SLOTS };
+  return { outputStage, shapeJudge, humDetector, notches, stableVolumeCounter, softClipCurve, SLOTS };
 })();

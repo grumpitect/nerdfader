@@ -87,7 +87,7 @@ function talkWav(secs) {
   return b;
 }
 // Talk the way YouTube's Stable Volume leaves it: the voice (2.5 kHz, 1 s) and pauses (0.5 s of 700 Hz) only 10 dB
-// apart.
+// apart, the same in both ears, with 60 Hz hum (which is what makes voice fix switch Stable Volume off).
 function liftedWav(secs) {
   const rate = 48000, total = secs * rate, b = Buffer.alloc(44 + total * 4);
   b.write("RIFF", 0); b.writeUInt32LE(36 + total * 4, 4); b.write("WAVEfmt ", 8); b.writeUInt32LE(16, 16);
@@ -95,7 +95,9 @@ function liftedWav(secs) {
   b.writeUInt16LE(4, 32); b.writeUInt16LE(16, 34); b.write("data", 36); b.writeUInt32LE(total * 4, 40);
   for (let i = 0; i < total; i++) {
     const t = i / rate;
-    const v = t % 1.5 < 1 ? 0.05 * Math.sin(2 * Math.PI * 2500 * t) : 0.0158 * Math.sin(2 * Math.PI * 700 * t);
+    let v = t % 1.5 < 1 ? 0.05 * Math.sin(2 * Math.PI * 2500 * t) : 0.0158 * Math.sin(2 * Math.PI * 700 * t);
+    for (let h = 3; h <= 33; h += 2) v += 0.001 * Math.sin(2 * Math.PI * 60 * h * t + h);
+    v += 0.0003 * Math.sin(i * 12.9898) * Math.sin(i * 78.233);   // a little noise
     b.writeInt16LE(Math.round(32767 * v), 44 + i * 4);
     b.writeInt16LE(Math.round(32767 * v), 46 + i * 4);
   }
@@ -553,7 +555,7 @@ test("the toolbar icon opens a dialog in the page that changes the tab, and clos
     await send({ type: "setTab", tabId: demoId, percent: 250 });
     // voice_fix on, as it looks once it has found hum.
     await send({ type: "setVoice", tabId: demoId, on: true });
-    await sw.evaluate((tabId) => chrome.storage.session.set({ [`hum:${tabId}`]: { 0: "60" } }), demoId);
+    await sw.evaluate((tabId) => chrome.storage.session.set({ [`hum:${tabId}`]: { 0: JSON.stringify({ hum: "60", mono: true, boom: true }) } }), demoId);
     await openDialog(demo, demoId);
     await demo.evaluate(() => document.activeElement?.blur());
     await wait(300);
@@ -1150,6 +1152,7 @@ test("voice fix's filters: less boom, 200 Hz down 4 dB, deep notches up to 6 kHz
     const level = async (f, on) => {
       const ctx = new OfflineAudioContext(2, 48000, 48000);
       const stage = tools.outputStage(ctx, { connect: AudioNode.prototype.connect, disconnect: AudioNode.prototype.disconnect });
+      stage.setShape({ mono: true, mixDb: 10 * Math.log10(2), boom: true }, false);   // everything, as for the talk
       stage.setFamily(60);
       stage.setVoice(on, false);
       const osc = new OscillatorNode(ctx, { frequency: f });
@@ -1193,7 +1196,9 @@ test("voice fix: the switch, its v key, explanation and hints; it stays on for t
   await popup.keyboard.press("v");
   await popup.locator(".voiceHint", { hasText: /^on/ }).waitFor();
   assert.equal(await popup.locator(".voiceToggle").isChecked(), true);
-  await popup.locator(".voiceHint", { hasText: "on · 60 Hz hum removed" }).waitFor({ timeout: 8000 });
+  await popup.locator(".voiceRule.scan").waitFor();   // the scanning line while it listens
+  await popup.locator(".voiceHint", { hasText: "on · both ears, less boom, 60 Hz hum removed" }).waitFor({ timeout: 8000 });
+  await popup.locator(".voiceRule.scan").waitFor({ state: "detached" });   // and gone once it knows
   assert.equal((await send({ type: "state", tabId })).voice, true);
 
   // A reload keeps it, and the new page finds the hum again.
@@ -1264,8 +1269,10 @@ test("on YouTube, voice fix turns Stable Volume off in that tab only, or counter
   const { page, tabId } = await openPlayer("/lifted.wav");
   await fakePlayer(page, { canSwitch: true });
   await send({ type: "setVoice", tabId, on: true });
+  const hasHum = (tabId) => until(async () => (await send({ type: "state", tabId })).hum === "60", 8000);
+  assert.equal(await hasHum(tabId), true, "hum found");
   await wait(300);
-  assert.equal(await page.evaluate(() => window.drc), false, "Stable Volume off in this player");
+  assert.equal(await page.evaluate(() => window.drc), false, "Stable Volume off in this player once hum is found");
   assert.equal(await page.evaluate(() => localStorage.getItem("yt-player-drc-pref")), "saved by the user", "the user's saved choice kept");
   await wait(5000);   // past the check, and long enough for the counter to have acted if it ran
   const switched = await pauseLevel(tabId);
@@ -1286,6 +1293,7 @@ test("on YouTube, voice fix turns Stable Volume off in that tab only, or counter
   await page.reload();
   await fakePlayer(page, { canSwitch: true });
   await page.evaluate(async () => { const a = document.createElement("audio"); a.id = "a"; a.src = "/lifted.wav"; a.loop = true; document.body.append(a); await a.play(); });
+  assert.equal(await hasHum(tabId), true, "hum found again after the reload");
   await wait(500);
   assert.equal((await send({ type: "state", tabId })).voice, true, "voice fix still on after the reload");
   assert.equal(await page.evaluate(() => window.drc), 1, "their Stable Volume left on after the reload");
@@ -1305,11 +1313,38 @@ test("on YouTube, voice fix turns Stable Volume off in that tab only, or counter
   const other = await openPlayer("/lifted.wav");
   await fakePlayer(other.page, { canSwitch: false });
   await send({ type: "setVoice", tabId: other.tabId, on: true });
-  await wait(6000);   // the check, then a few seconds of levels
+  assert.equal(await hasHum(other.tabId), true);
+  await wait(5000);   // the check, then a few seconds of levels
   const countered = await pauseLevel(other.tabId);
   console.log(`    pauses: ${switched.toFixed(1)} dB with Stable Volume switched off (no counter), ${countered.toFixed(1)} dB countered`);
   // About 6 dB once a pause has settled; it eases in over the first ~80 ms of each, so the average is lower.
   assert.ok(switched - countered > 3, `pauses turned down ${(switched - countered).toFixed(1)} dB`);
   await send({ type: "setVoice", tabId: other.tabId, on: false });
   await other.page.close();
+});
+
+test("voice fix leaves a recording that is already fine as it is: same level, same peaks, nothing to fix", async () => {
+  // The same in both ears, no boom, no hum: loud.wav (1 kHz, peaks near full scale).
+  const { page, tabId } = await openPlayer("/loud.wav");
+  await page.evaluate(() => (window.__nerdfaderHumTiming = { lockAfter: 1, giveUpAfter: 2 }));
+  // Readings of the same sound vary by a few tenths of a dB, so three each.
+  const average = async () => {
+    const r = [await loudness(tabId), await loudness(tabId), await loudness(tabId)];
+    return { db: r.reduce((a, x) => a + x.db, 0) / 3, clipped: Math.max(...r.map((x) => x.clipped)) };
+  };
+  const before = await average();
+  await send({ type: "setVoice", tabId, on: true });
+  assert.equal(await until(async () => { const s = await send({ type: "state", tabId }); return s.hum === "none" && s.shape; }, 10000) && true, true, "listened");
+  const state = await send({ type: "state", tabId });
+  assert.deepEqual(state.shape, { mono: false, boom: false });
+  const after = await average();
+  assert.ok(Math.abs(after.db - before.db) < 0.5, `same level (${before.db.toFixed(1)} -> ${after.db.toFixed(1)} dB)`);
+  assert.ok(after.clipped <= before.clipped + 1e-4, "no clipping added");
+  const popup = await context.newPage();
+  await popup.addInitScript(([tabId, url]) => { chrome.tabs.query = async () => [{ id: tabId, url }]; }, [tabId, page.url()]);
+  await popup.goto(ext.url());
+  await popup.locator(".voiceHint", { hasText: "on · nothing to fix" }).waitFor();
+  await popup.close();
+  await send({ type: "setVoice", tabId, on: false });
+  await page.close();
 });

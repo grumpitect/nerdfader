@@ -86,7 +86,15 @@ globalThis.NerdfaderPanel = (() => {
 .nf button.primary { color: var(--pink); border-color: var(--pink); }
 .nf button.primary:hover { background: rgba(255, 79, 168, 0.12); }
 
-.nf .rule { margin: 10px 0; border-top: 1px dashed var(--edge); }
+.nf .rule { margin: 10px 0; border-top: 1px dashed var(--edge); position: relative; }
+/* While voice_fix listens, a short line of light runs along the rule under it. */
+.nf .rule.scan::after {
+  content: ""; position: absolute; top: -1px; left: 0; width: 60px; height: 1px;
+  background: linear-gradient(90deg, transparent, var(--cyan), transparent);
+  animation: nf-scan 1.6s ease-in-out infinite alternate;
+}
+@keyframes nf-scan { from { left: 0; } to { left: calc(100% - 60px); } }
+@media (prefers-reduced-motion: reduce) { .nf .rule.scan::after { animation: none; left: calc(50% - 30px); } }
 
 .nf .toggle { display: flex; align-items: center; gap: 8px; cursor: pointer; }
 .nf .voiceRow { margin-top: 8px; }
@@ -175,14 +183,15 @@ globalThis.NerdfaderPanel = (() => {
 </label>
 <div class="hint voiceHint"></div>
 <div class="info voiceInfo" hidden>
-  <p>Fixes badly recorded talks: a voice in one ear, mains hum, a boomy low end.</p>
+  <p>Fixes badly recorded talks: a voice in one ear, mains hum, a boomy low end. It listens first and fixes only what
+  it finds, so a talk that's fine plays as it is.</p>
   <p><b>Off:</b> the tab plays as sent.</p>
-  <p><b>On:</b> for this tab. Turn it off for music: it loses its stereo.</p>
-  <p>On YouTube it also turns off Stable Volume in that tab while it's on: that setting lifts the quiet moments, and
-  the hum with them.</p>
+  <p><b>On:</b> for this tab. Turn it off for music: it may lose its stereo.</p>
+  <p>When it finds hum on YouTube, it also turns off Stable Volume in that tab while it's on: that setting lifts the
+  quiet moments, and the hum with them.</p>
   <p>Once on, the page's sound goes through Nerdfader until you reload the page.</p>
 </div>
-<div class="rule"></div>
+<div class="rule voiceRule"></div>
 <label class="toggle">
   <input type="checkbox" class="override">
   <span class="caret">&gt;</span>
@@ -392,12 +401,20 @@ globalThis.NerdfaderPanel = (() => {
       $("captureHint").textContent = "if on, allows a volume boost by recording the tab";
 
       $("voiceToggle").checked = supported && state.voice;
+      // What it fixes, as it finds out: "on · listening", then for example "on · both ears, less boom, 60 Hz hum
+      // removed", or "on · nothing to fix" for a talk that is fine as it is.
+      const fixes = [];
+      if (state.shape?.mono) fixes.push("both ears");
+      if (state.shape?.boom) fixes.push("less boom");
+      if (state.hum === "50" || state.hum === "60") fixes.push(`${state.hum} Hz hum removed`);
+      const done = !!state.shape && !!state.hum;
+      $("voiceRule").classList.toggle("scan", supported && state.voice && !done && !state.status);
       $("voiceHint").textContent = !supported || !state.voice ? "for talks: voice in both ears, less hum and boom"
         : state.status === "click" ? "on · click the page to start"
         : state.status && state.status !== "unknown" ? "on · this site can't be fixed"
-        : state.hum === "none" ? "on · no hum found"
-        : state.hum ? `on · ${state.hum} Hz hum removed`
-        : "on";
+        : fixes.length ? `on · ${fixes.join(", ")}`
+        : done ? "on · nothing to fix"
+        : "on · listening";
 
       const settings = state.settings ?? { shortcut: null, resetShortcut: null, upShortcut: null, downShortcut: null, altScroll: true, scrollKeys: ["shift", "meta"] };
       for (const b of root.querySelectorAll(".shortcutBtn")) {

@@ -33,14 +33,16 @@
   const connect = AudioNode.prototype.connect;
   const disconnect = AudioNode.prototype.disconnect;
 
-  // Voice fix's hum notches. lock: the hum notched now (50, 60 or null). result: what was reported ("" until there
-  // is an answer, then "50", "60" or "none"). due: a check is wanted (at first, and when a new video has played a
-  // while).
-  const hum = previous?.hum ?? { lock: null, pitch: null, result: "", due: true };
+  // What voice fix found and fixes. shape: shapeJudge()'s { mono, mixDb, boom }, null until it knows. lock: the hum
+  // notched now (50, 60 or null), at pitch. result: the hum reported ("" until there is an answer, then "50", "60"
+  // or "none"). due: a listen is wanted (at first, and when a new video has played a while).
+  const hum = previous?.hum ?? { shape: null, lock: null, pitch: null, result: "", due: true };
+  hum.shape ??= null;
   // A stage in front of a context's speakers (content/voice.js). Stages handed over by an earlier copy, including
   // version 1.2's simpler ones, are rebuilt around their input, which the page's sound is already routed into.
   const outputStage = (ctx, input) => {
     const stage = tools.outputStage(ctx, { connect, disconnect }, input);
+    if (hum.shape) stage.setShape(hum.shape, false);
     stage.setFamily(hum.lock, hum.pitch);
     stage.setVoice(voice, false);
     return stage;
@@ -180,7 +182,7 @@
     if (routed.has(el) && (e.type === "loadstart" || e.type === "emptied" ||
       (e.type === "playing" && sources.has(el) && sources.get(el) !== el.currentSrc))) newSource();
     if (e.type === "playing") sources.set(el, el.currentSrc);
-    if (voice && e.type === "playing") stableVolume(true);   // the player may not have existed when voice fix came on
+    if (voice && hum.lock && e.type === "playing") stableVolume(true);   // the player may not have existed before
     report();
   };
   const mediaEvents = ["play", "playing", "pause", "ended", "emptied", "loadstart", "encrypted", "volumechange"];
@@ -189,57 +191,119 @@
   addEventListener("keydown", wake, true);
   addEventListener("click", wake, true);
 
-  // Hum detection, for voice fix, on the elements' sound only. It listens until it has an answer (content/voice.js),
-  // then changes the notches at a quiet moment, so the change can't be heard. A new video in the same element (the
-  // next one, an ad, a site that changes pages without loading one) keeps the notches, and is checked again once it
-  // has played 30 s: ads are usually over by then.
+  // Listening, for voice fix, on the elements' sound only: how the recording is made (content/voice.js shapeJudge(),
+  // after about 6 s of talking) and whether it has mains hum (humDetector(), up to a minute). Each is applied as soon
+  // as it is known; the notches go in at a quiet moment, so the change can't be heard. A new video in the same
+  // element (the next one, an ad, a site that changes pages without loading one) keeps what was found, and is listened
+  // to again once it has played 30 s: ads are usually over by then.
   const sources = new WeakMap();   // element -> the media it played last
   const timing = () => ({ lockAfter: 6, giveUpAfter: 60, recheckAfter: 30, ...window.__nerdfaderHumTiming });   // tests shorten these
   let detection = null, fresh = null;
   function maybeDetect() {
     if (!hum.due || detection || fresh || !voice || !boostStage || boostCtx.state !== "running") return;
-    const analyser = boostCtx.createAnalyser();
+    const ctx = boostCtx, input = boostStage.input, made = [];
+    const node = (n) => (made.push(n), n);
+    const analyser = node(ctx.createAnalyser());
     analyser.fftSize = 16384;
     analyser.smoothingTimeConstant = 0;
-    analyser.channelCount = 1;   // left and right mixed, as voice fix plays it
+    analyser.channelCount = 1;   // left and right mixed, as a mono voice fix plays it
     analyser.channelCountMode = "explicit";
-    connect.call(boostStage.input, analyser);
-    const detector = tools.humDetector({ sampleRate: boostCtx.sampleRate, fftSize: analyser.fftSize, ...timing() });
+    connect.call(input, analyser);
+    // Left, right and their difference, from the last 4096 samples (a mono source counts as both sides).
+    const both = node(ctx.createGain());
+    both.channelCount = 2;
+    both.channelCountMode = "explicit";
+    const split = node(ctx.createChannelSplitter(2)), minus = node(ctx.createGain());
+    minus.gain.value = -1;
+    const meter = () => {
+      const a = node(ctx.createAnalyser());
+      a.fftSize = 4096;
+      a.channelCount = 1;
+      a.channelCountMode = "explicit";
+      return a;
+    };
+    const left = meter(), right = meter(), diff = meter();
+    connect.call(input, both);
+    connect.call(both, split);
+    connect.call(split, left, 0);
+    connect.call(split, right, 1);
+    connect.call(split, diff, 0);
+    connect.call(split, minus, 1);
+    connect.call(minus, diff);
+    const options = { sampleRate: ctx.sampleRate, fftSize: analyser.fftSize, ...timing() };
+    const detector = tools.humDetector(options), judge = tools.shapeJudge(options);
     const spectrum = new Float32Array(analyser.frequencyBinCount), wave = new Float32Array(analyser.fftSize);
-    // Its first readings, before it has heard a whole window, are partly empty: they would look like quiet moments.
-    const full = boostCtx.currentTime + analyser.fftSize / boostCtx.sampleRate;
-    let found, pitch, since = 0;
-    const read = () => {
-      if (boostCtx.currentTime < full) return;
-      analyser.getFloatTimeDomainData(wave);
+    const side = new Float32Array(4096), binHz = ctx.sampleRate / analyser.fftSize;
+    const meanSquare = (a, from = 0) => {
       let sum = 0;
-      for (const v of wave) sum += v * v;
-      const rms = 10 * Math.log10(sum / wave.length);
+      for (let i = from; i < a.length; i++) sum += a[i] * a[i];
+      return sum / (a.length - from);
+    };
+    const band = (lo, hi) => {
+      let p = 0;
+      for (let k = Math.ceil(lo / binHz); k < hi / binHz; k++) p += 10 ** (spectrum[k] / 10);
+      return p;
+    };
+    // Its first readings, before it has heard a whole window, are partly empty: they would look like quiet moments.
+    const full = ctx.currentTime + analyser.fftSize / ctx.sampleRate;
+    let shaped = false, heard = false, found, pitch, since = 0;
+    const read = () => {
+      if (ctx.currentTime < full) return;
+      analyser.getFloatTimeDomainData(wave);
+      const rms = 10 * Math.log10(meanSquare(wave));
       if (found !== undefined) {
-        if (rms <= detector.quietLevel || Date.now() - since > 10000) done();
-        return;
+        if (rms <= detector.quietLevel || Date.now() - since > 10000) hearDone();
       }
+      if (shaped && heard) return;
       analyser.getFloatFrequencyData(spectrum);
+      if (!shaped) {
+        left.getFloatTimeDomainData(side);
+        const l = meanSquare(side);
+        right.getFloatTimeDomainData(side);
+        const r = meanSquare(side);
+        diff.getFloatTimeDomainData(side);
+        const shape = judge({
+          level: rms, l, r, side: meanSquare(side) / 4, mid: meanSquare(wave, wave.length - 4096),
+          low: band(160, 320), core: band(1000, 4000),
+        });
+        if (shape) { shaped = true; useShape(shape); }
+      }
+      if (found !== undefined || heard) return;
       const answer = detector.frame(spectrum, rms);
       if (answer === null) return;
       found = answer === "none" ? null : answer;
       pitch = detector.pitch;
       since = Date.now();
-      if (found === hum.lock) done();
+      if (found === hum.lock) hearDone();
     };
-    // (Turned off or taken over before this, the check is still due and starts again later.)
-    const done = () => {
+    const hearDone = () => {
+      heard = true;
+      useHum(found, pitch);
+      found = undefined;
+      if (shaped) finish();
+    };
+    // (Turned off or taken over before both are done, the listen is still due and starts again later.)
+    const finish = () => {
       hum.due = false;
       stopDetect();
-      useHum(found, pitch);
     };
-    detection = { analyser, timer: setInterval(read, 100) };
+    const timer = setInterval(() => { read(); if (shaped && heard) finish(); }, 100);
+    detection = { made, timer };
   }
   function stopDetect() {
     if (!detection) return;
     clearInterval(detection.timer);
-    try { disconnect.call(boostStage.input, detection.analyser); } catch {}   // already gone if the stage was rebuilt
+    for (const n of detection.made) {
+      disconnect.call(n);
+      try { disconnect.call(boostStage.input, n); } catch {}   // only some are fed from it, and not after a rebuild
+    }
     detection = null;
+  }
+  function useShape(shape) {
+    hum.shape = shape;
+    boostStage?.setShape(shape);
+    forEachStage((stage) => stage.setShape(shape));
+    tellHum();
   }
   function useHum(family, pitch) {
     hum.lock = family;
@@ -247,16 +311,23 @@
     hum.result = family ? String(family) : "none";
     boostStage?.setFamily(family, pitch);
     forEachStage((stage) => stage.setFamily(family, pitch));
+    if (voice && family) stableVolume(true);   // only for hum: Stable Volume lifts it with the pauses
     tellHum();
   }
-  const tellHum = () => hum.result && window.dispatchEvent(new CustomEvent("nerdfader3:hum", { detail: hum.result }));
+  // What voice fix found, for the dialog: { hum: "" | "50" | "60" | "none", mono, boom } (mono and boom null until
+  // judged), as text.
+  const tellHum = () => {
+    if (!hum.result && !hum.shape) return;
+    const detail = JSON.stringify({ hum: hum.result, mono: hum.shape?.mono ?? null, boom: hum.shape?.boom ?? null });
+    window.dispatchEvent(new CustomEvent("nerdfader3:hum", { detail }));
+  };
   function newSource() {
     if (!voice) return;
     stopDetect();
     clearInterval(fresh?.timer);
     fresh = null;
     hum.due = true;
-    if (!hum.result) return maybeDetect();   // still listening: start over on the new one
+    if (!hum.result || !hum.shape) return maybeDetect();   // still listening: start over on the new one
     let played = 0;
     const after = timing().recheckAfter;
     fresh = {
@@ -312,7 +383,6 @@
         stable.off = false;
       }
     } catch {}
-    if (!off) stable.theirs = false;
     clearTimeout(stableCheck);
     if (!off) return setCounter(false);
     // Whether it worked shows once the player has switched to the other copy of the sound.
@@ -411,7 +481,8 @@
       maybeDetect();
       report();
     }
-    stableVolume(voice);   // (also after an update, which needs the counter started again)
+    stableVolume(voice && !!hum.lock);   // (also after an update, which needs the counter started again)
+    if (!voice) stable.theirs = false;
     if (voice) tellHum();   // a new copy of bridge.js asks again after an update
   };
   window.addEventListener("nerdfader3:voice", onVoice);

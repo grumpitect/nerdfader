@@ -27,12 +27,19 @@ Made for the [Nerdative](https://www.youtube.com/@nerdative) channel on YouTube,
   mode: once for that tab, or always. It runs only while the tab plays sound: it stops a moment after the tab
   pauses or goes quiet, and starts again when it plays. The ⓘ next to capture_mode in the dialog explains it.
 - **voice_fix, for badly recorded talks.** Turn it on (or press **v** in the dialog) for a talk or interview where
-  the voice sits in one ear, mains hum buzzes underneath, or the low end booms. It mixes the sound to mono (the voice
-  comes out of both ears), cuts the rumble below 80 Hz, turns 200 Hz down 4 dB, and listens for hum at 50 or 60 Hz;
-  once it finds some, narrow notches take it out (the hint says "60 Hz hum removed" or "no hum found"). It's per tab,
-  stays on while the tab stays on the same site, and turns off when it moves to another one. The badge reads
-  **fix** at 100%. Leave it off for music, which would lose its stereo. It works on the sites the in-page boost
-  works on, not through capture mode. On YouTube it also turns off **Stable Volume** in that tab while it's on
+  the voice sits in one ear, mains hum buzzes underneath, or the low end booms. It listens for a few seconds first
+  and fixes only what it finds, so a talk that's already fine plays exactly as it was:
+  - left and right differ (two mics in a room, or the voice in one ear): mixed to mono, so the voice comes out of
+    both ears, at a level that keeps it as loud as before, with less boom (the rumble below 80 Hz cut, 200 Hz down
+    4 dB);
+  - a heavy low end in an otherwise fine recording: less boom on its own;
+  - mains hum at 50 or 60 Hz: narrow notches take it out.
+
+  The hint says what it's doing: "listening" (with a line of light running under it), then for example "both ears,
+  less boom, 60 Hz hum removed", or "nothing to fix". Both ears and less boom are decided in about 2 seconds, hum in
+  2 to 15, and "nothing to fix" in about 15 seconds of sound. It's per tab, stays on while the tab stays on the same site, and turns off when it moves to
+  another one. The badge reads **fix** at 100%. It works on the sites the in-page boost works on, not through
+  capture mode. When it finds hum on YouTube, it also turns off **Stable Volume** in that tab while it's on
   (YouTube's default, which lifts the quiet moments, and the hum with them, 5 to 8 dB), and back on when voice_fix
   goes off; your own YouTube setting and other tabs are left as they are. Change Stable Volume yourself in the
   meantime and Nerdfader leaves it as you set it in that tab, reloads included, until voice_fix goes off.
@@ -113,17 +120,24 @@ each page (and each frame in it) that scales the page's own sound.
   soft clipper (Web Audio).
 - **Web Audio** (games, some players): sound headed for the speakers passes through the same gain stage, which
   glides to the new level so dragging doesn't click.
-- **voice_fix** adds to that stage, crossfading in over 50 ms: a mono mix (0.71 of each side), a high-pass at 80 Hz,
-  -4 dB at 200 Hz, and up to 16 notch filters (Q 30). To find hum, it looks at the quietest 30% of moments in what
+- **voice_fix** adds to that stage: a mono mix, a high-pass at 80 Hz, -4 dB at 200 Hz, and up to 56 notch filters.
+  Each part stays flat until it's needed, and the sound only crossfades (over 50 ms) from the original to voice_fix's
+  version once there is something to fix. For the recording itself it compares left and right over the louder half
+  of 6 s of sound: when they don't move together (their difference is more than a tenth of their sum, as with two
+  mics in a room) or one is 1.5 dB louder, it mixes to mono, turned up by however much keeps the level the same (up to
+  3 dB; nothing for identical channels). Less boom comes with the mono mix, or on its own when 160 to 320 Hz is within
+  2 dB of the voice's 1 to 4 kHz (a clean voice is 3 to 5 dB below). To find hum, it looks at the quietest 30% of moments in what
   plays (when nobody speaks, hum stands out), and checks how far each odd harmonic of 50 and 60 Hz stands above
   its neighbours. When at least three of one family stand out by 6 dB or more and the other family doesn't, it
   notches that family's 3rd harmonic and every odd one from 500 to 6000 Hz (the 5th and 7th sit in the body of a
   voice, so they stay), at the hum's exact pitch, which it measures from where those harmonics peak (mains hum is
   rarely exactly 50 or 60 Hz). Above 2 kHz the notches are 20 Hz wide, so together they take about 1 dB from the
-  voice there. The notches go in at a quiet moment so the change can't be heard. With no answer after a
-  minute of sound, it says "no hum found". When the next video plays in the same player, it checks again once
+  voice there. The notches go in at a quiet moment so the change can't be heard. Hum that is
+  unmistakable (four harmonics 9 dB out) is notched from 2 s; after 15 s of sound with not even three harmonics 4 dB
+  out, it says there is none; otherwise it decides by a minute. Plain cases of the recording itself (two mics far
+  apart, or identical channels with a light low end) are judged after 1.5 s instead of 6. When the next video plays in the same player, it checks again once
   that video has played 30 s, so an ad doesn't count.
-- **YouTube's Stable Volume** plays a compressed copy of the sound. voice_fix asks the tab's player to switch it off
+- **YouTube's Stable Volume** plays a compressed copy of the sound. Once voice_fix finds hum, it asks the tab's player to switch it off
   (the player's own `setDrcUserPreference`) and puts back the choice YouTube saves for every tab, so only that tab
   changes. If the player can't do that any more, or still reports Stable Volume a few seconds later, voice_fix
   counters it instead: every 25 ms it measures the sound (30 ms ahead of what plays) and turns quiet moments back

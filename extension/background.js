@@ -78,7 +78,7 @@ const key = {
   blocked: (id) => `blocked:${id}`,   // { frameId: why that frame can't boost }
   capture: (id) => `capture:${id}`,   // { state: off | on | idle | paused, once: allowed for this tab }
   voice: (id) => `voice:${id}`,       // { site, stableTheirs } while voice fix is on for the tab
-  hum: (id) => `hum:${id}`,           // { frameId: the hum voice fix found there: "50", "60" or "none" }
+  hum: (id) => `hum:${id}`,           // { frameId: what voice fix found there, as text: { hum, mono, boom } }
 };
 const tabKeys = (id) => Object.values(key).map((k) => k(id));
 const get = async (area, k, fallback) => (await chrome.storage[area].get(k))[k] ?? fallback;
@@ -101,10 +101,15 @@ async function tabInfo(tabId) {
   const percent = o.on ? o.percent : own;
   const status = Object.values(blocked).find(Boolean) ?? "";
   const allowed = captureAlways || capture.once;
-  // The page's own answer, or else an embedded player's.
-  const hum = hums[0] || (Object.values(hums).find(Boolean) ?? "");
+  // The page's own answer, or else an embedded player's. (Copies from before 1.4 sent the hum alone: "60".)
+  const raw = hums[0] || (Object.values(hums).find(Boolean) ?? "");
+  let found;
+  try { found = JSON.parse(raw); } catch {}
+  if (typeof found !== "object" || !found) found = { hum: String(raw) };
+  const hum = found.hum ?? "";
+  const shape = typeof found.mono === "boolean" ? { mono: found.mono, boom: !!found.boom } : null;
   return {
-    own, override: o, percent, status, capture, captureAlways, allowed, voice: !!voice, hum,
+    own, override: o, percent, status, capture, captureAlways, allowed, voice: !!voice, hum, shape,
     stableTheirs: !!voice?.stableTheirs,
     need: percent > DEFAULT && status !== "" && allowed,
   };
@@ -219,6 +224,7 @@ async function state(tabId) {
     captureAlways: info.captureAlways,
     voice: info.voice,
     hum: info.hum,
+    shape: info.shape,
   };
 }
 

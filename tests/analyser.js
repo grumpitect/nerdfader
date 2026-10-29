@@ -63,3 +63,28 @@ export function detect(voice, samples, sampleRate, options = {}) {
   }
   return { answer: null, at: samples.length / sampleRate };
 }
+
+// Runs shapeJudge over stereo samples (interleaved) like main.js does: every 100 ms, the last 4096 samples of left,
+// right, side and mid, and the low end and voice core from the mono spectrum.
+export function judge(voice, stereo, sampleRate, options = {}) {
+  const n = stereo.length / 2, fftSize = 16384, hop = Math.round(sampleRate * 0.1), W = 4096;
+  const mono = new Float32Array(n);
+  for (let i = 0; i < n; i++) mono[i] = 0.5 * (stereo[2 * i] + stereo[2 * i + 1]);
+  const next = voice.shapeJudge(options), read = analyser(fftSize), binHz = sampleRate / fftSize;
+  const band = (spectrum, lo, hi) => {
+    let p = 0;
+    for (let k = Math.ceil(lo / binHz); k < hi / binHz; k++) p += 10 ** (spectrum[k] / 10);
+    return p;
+  };
+  for (let end = fftSize; end <= n; end += hop) {
+    const { spectrum, rms } = read(mono.subarray(end - fftSize, end));
+    let l = 0, r = 0, mid = 0, side = 0;
+    for (let i = end - W; i < end; i++) {
+      const a = stereo[2 * i], b = stereo[2 * i + 1];
+      l += a * a; r += b * b; mid += ((a + b) / 2) ** 2; side += ((a - b) / 2) ** 2;
+    }
+    const answer = next({ level: rms, l: l / W, r: r / W, mid: mid / W, side: side / W, low: band(spectrum, 160, 320), core: band(spectrum, 1000, 4000) });
+    if (answer) return { ...answer, at: end / sampleRate };
+  }
+  return null;
+}

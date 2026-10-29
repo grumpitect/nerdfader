@@ -3,7 +3,7 @@
 // page would use is computed in Node (tests/analyser.js).
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { loadVoice, detect } from "./analyser.js";
+import { loadVoice, detect, judge } from "./analyser.js";
 
 const voice = loadVoice();
 const RATE = 48000;
@@ -151,4 +151,81 @@ test("Stable Volume's counter turns lifted pauses back down, and leaves uncompre
   assert.ok(Math.abs(lifted.atVoice) < 1e-9, "the voice untouched");
   const plain = run(-40);   // 20 dB below: not compressed
   assert.ok(plain.atPause > -0.01, `uncompressed pause left alone (${plain.atPause.toFixed(2)} dB)`);
+});
+
+// Two channels from mono parts: [left, right] gains for each part.
+function stereo(seconds, seed, parts) {
+  const n = seconds * RATE, out = new Float32Array(2 * n);
+  parts.forEach(([make, gl, gr], k) => {
+    const mono = recording(seconds, seed + k, make);
+    for (let i = 0; i < n; i++) { out[2 * i] += gl * mono[i]; out[2 * i + 1] += gr * mono[i]; }
+  });
+  return out;
+}
+// A low hum of the room at 150 to 300 Hz, as a boomy recording has under the voice.
+function boom(samples) {
+  for (let i = 0; i < samples.length; i++) {
+    const t = i / RATE;
+    samples[i] += 0.03 * (Math.sin(2 * Math.PI * 180 * t) + Math.sin(2 * Math.PI * 240 * t + 1)) * (0.6 + 0.4 * Math.sin(2 * Math.PI * 3 * t));
+  }
+}
+
+test("a recording that is the same in both ears is left in stereo, as loud as it was", () => {
+  const r = judge(voice, stereo(10, 11, [[talk, 1, 1]]), RATE);
+  assert.equal(r.mono, false);
+  assert.equal(r.mixDb, 0);
+});
+
+test("the voice in one ear: mixed to mono, 3 dB up so it is as loud as before, with less boom", () => {
+  const r = judge(voice, stereo(10, 12, [[talk, 1, 0.2]]), RATE);
+  assert.equal(r.mono, true);
+  assert.ok(Math.abs(r.mixDb - 1.6) < 0.5, `mix ${r.mixDb.toFixed(2)} dB`);   // (1 + 0.04) / 2 against ((1.2) / 2)^2
+  assert.equal(r.boom, true);
+});
+
+test("two mics in a room (left and right unrelated): mixed to mono, about 3 dB up", () => {
+  // The second talker, 0.73 s apart (the made-up talk follows the same pitch pattern every time).
+  const later = (samples, rand) => {
+    const longer = new Float32Array(samples.length + RATE);
+    talk(longer, rand);
+    for (let i = 0; i < samples.length; i++) samples[i] += longer[i + Math.round(0.73 * RATE)];
+  };
+  const r = judge(voice, stereo(10, 13, [[talk, 1, 0], [later, 0, 1]]), RATE);
+  assert.equal(r.mono, true);
+  assert.ok(Math.abs(r.mixDb - 3) < 0.6, `mix ${r.mixDb.toFixed(2)} dB`);
+});
+
+test("a boomy recording in both ears gets less boom; a clean one doesn't", () => {
+  const boomy = judge(voice, stereo(10, 14, [[(s, rand) => { talk(s, rand); boom(s); }, 1, 1]]), RATE);
+  assert.deepEqual([boomy.mono, boomy.boom], [false, true]);
+  const clean = judge(voice, stereo(10, 15, [[talk, 1, 1]]), RATE);
+  assert.equal(clean.boom, false, "clean talk: no low-end cut");
+});
+
+test("decisions come early when the evidence is plain", () => {
+  // Strong hum (about 20 dB out, as on part of the clip this was made for): found within about 2 s.
+  const loud = detect(voice, recording(20, 21, talk, (s, rand) => hum(s, 60, rand, 0.006)), RATE);
+  assert.equal(loud.answer, 60);
+  assert.ok(loud.at < 3.5, `strong hum found at ${loud.at.toFixed(1)} s`);
+  // A clean talk: "none" after about 15 s of sound, not a minute.
+  const clean = detect(voice, recording(25, 22, talk), RATE);
+  assert.equal(clean.answer, "none");
+  assert.ok(clean.at < 18, `no hum said at ${clean.at.toFixed(1)} s`);
+  // Two mics: judged in under 2 s.
+  const later = (samples, rand) => {
+    const longer = new Float32Array(samples.length + RATE);
+    talk(longer, rand);
+    for (let i = 0; i < samples.length; i++) samples[i] += longer[i + Math.round(0.73 * RATE)];
+  };
+  const apart = judge(voice, stereo(10, 23, [[talk, 1, 0], [later, 0, 1]]), RATE);
+  const same = judge(voice, stereo(10, 24, [[talk, 1, 1]]), RATE);
+  assert.ok(apart.mono && apart.at < 2.5, `two mics judged at ${apart.at.toFixed(1)} s`);
+  // The made-up voice is low and buzzy, so its low end isn't clearly light: the boom call waits the usual 6 s.
+  // (Real talks with identical channels were judged at 1.7 to 2.4 s.)
+  assert.ok(!same.mono && same.at < 7.5, `identical channels judged at ${same.at.toFixed(1)} s`);
+});
+
+test("music and a synth on the 60 Hz grid still find no hum with the early rules (full defaults)", () => {
+  assert.equal(detect(voice, recording(25, 4, music), RATE).answer, "none");
+  assert.equal(detect(voice, recording(25, 5, synth), RATE).answer, "none");
 });
