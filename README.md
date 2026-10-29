@@ -25,10 +25,20 @@ Made for the [Nerdative](https://www.youtube.com/@nerdative) channel on YouTube,
   without permission to process it) can't be boosted from inside the page. For those, Nerdfader offers capture
   mode: once for that tab, or always. It runs only while the tab plays sound: it stops a moment after the tab
   pauses or goes quiet, and starts again when it plays. The ⓘ next to capture_mode in the dialog explains it.
+- **voice_fix, for badly recorded talks.** Turn it on (or press **v** in the dialog) for a talk or interview where
+  the voice sits in one ear, mains hum buzzes underneath, or the low end booms. It mixes the sound to mono (the voice
+  comes out of both ears), cuts the rumble below 80 Hz, turns 200 Hz down 4 dB, and listens for hum at 50 or 60 Hz;
+  once it finds some, narrow notches take it out (the hint says "60 Hz hum removed" or "no hum found"). It's per tab,
+  stays on while the tab stays on the same site, and turns off when it moves to another one. The badge reads
+  **fix** at 100%. Leave it off for music, which would lose its stereo. It works on the sites the in-page boost
+  works on, not through capture mode. On YouTube it also turns off **Stable Volume** in that tab while it's on
+  (YouTube's default, which lifts the quiet moments, and the hum with them, 5 to 8 dB), and back on when voice_fix
+  goes off; your own YouTube setting and other tabs are left as they are. Change Stable Volume yourself in the
+  meantime and Nerdfader leaves it as you set it in that tab, reloads included, until voice_fix goes off.
 - **Reset.** One click (or **r** in the dialog) puts the tab back to 100%; with all_tabs on, it resets every tab.
 - **all_tabs.** Turn it on and one slider sets every tab, including ones you open later. Turn it off and every
   tab goes back to the volume it had before.
-- **Badge.** The toolbar icon shows the tab's volume when it isn't 100%.
+- **Badge.** The toolbar icon shows the tab's volume when it isn't 100%, and **fix** at 100% with voice_fix on.
 - **Keys.** On any page (Ctrl instead of ⌘ on Windows and Linux):
 
   | Keys | Does |
@@ -53,7 +63,7 @@ Made for the [Nerdative](https://www.youtube.com/@nerdative) channel on YouTube,
   after a flick) never turns into a volume change when you press them. The page doesn't rubber-band while the dialog
   is up, so a hard swipe at the top or bottom of a page stays with the dialog.
 - **Keyboard and mouse wheel in the dialog.** ←/→ change by 5% (25% above 100%; hold Shift for finer steps), **0**
-  to **9** jump to 0 to 90%, **r** resets, **c** takes up the capture-mode offer, **Esc** closes, and scrolling over
+  to **9** jump to 0 to 90%, **r** resets, **v** turns voice_fix on and off, **c** takes up the capture-mode offer, **Esc** closes, and scrolling over
   the dialog works too. The dialog keeps the keyboard itself, so no control inside it takes focus or shows a focus
   ring (Tab doesn't step through it).
 - **Four-finger gestures?** macOS keeps three- and four-finger trackpad gestures to itself; web pages and extensions
@@ -102,6 +112,22 @@ each page (and each frame in it) that scales the page's own sound.
   soft clipper (Web Audio).
 - **Web Audio** (games, some players): sound headed for the speakers passes through the same gain stage, which
   glides to the new level so dragging doesn't click.
+- **voice_fix** adds to that stage, crossfading in over 50 ms: a mono mix (0.71 of each side), a high-pass at 80 Hz,
+  -4 dB at 200 Hz, and up to 16 notch filters (Q 30). To find hum, it looks at the quietest 30% of moments in what
+  plays (when nobody speaks, hum stands out), and checks how far each odd harmonic of 50 and 60 Hz stands above
+  its neighbours. When at least three of one family stand out by 6 dB or more and the other family doesn't, it
+  notches that family's 3rd harmonic and every odd one from 500 to 6000 Hz (the 5th and 7th sit in the body of a
+  voice, so they stay), at the hum's exact pitch, which it measures from where those harmonics peak (mains hum is
+  rarely exactly 50 or 60 Hz). Above 2 kHz the notches are 20 Hz wide, so together they take about 1 dB from the
+  voice there. The notches go in at a quiet moment so the change can't be heard. With no answer after a
+  minute of sound, it says "no hum found". When the next video plays in the same player, it checks again once
+  that video has played 30 s, so an ad doesn't count.
+- **YouTube's Stable Volume** plays a compressed copy of the sound. voice_fix asks the tab's player to switch it off
+  (the player's own `setDrcUserPreference`) and puts back the choice YouTube saves for every tab, so only that tab
+  changes. If the player can't do that any more, or still reports Stable Volume a few seconds later, voice_fix
+  counters it instead: every 25 ms it measures the sound (30 ms ahead of what plays) and turns quiet moments back
+  down by about as much as Stable Volume lifted them, measured on a talk (up to 7 dB). It scales that by how
+  compressed the sound is, so sound that isn't Stable Volume's is left nearly alone.
 
 The browser won't let a page's script process three kinds of sound, so those can't be boosted from inside:
 protected (DRM) media, media from another site that doesn't allow it, and sound in a page you haven't clicked yet
@@ -136,6 +162,9 @@ npx playwright install chromium
 npm test               # loads the extension into Chromium and measures what tabs actually play at
 ```
 
+`npm test` also runs the hum detector on made-up recordings in Node (talk with 60 Hz and with 50 Hz hum, clean
+talk, music, a synth holding notes on the 60 Hz grid), and checks voice fix's filters against their exact response.
+
 The tests switch the browser's audio output off (pages still play and can be captured) and measure each tab's
 real output with tab capture, so they're silent.
 
@@ -154,9 +183,12 @@ you've clicked a page. Its audio output is off and it runs headless, so it's sil
 
 To try a change, load the `extension` folder with **Load unpacked** and click the reload arrow after editing.
 
-- `extension/content/main.js`: runs in the page's world; patches media volume and Web Audio, boosts, and reports
-  what it can't boost.
-- `extension/content/bridge.js`: runs in the extension's world; passes the level from the background to the page.
+- `extension/content/voice.js`: runs in the page's world just before main.js; the output stage (level, voice fix,
+  soft clipper) and the hum detector.
+- `extension/content/main.js`: runs in the page's world; patches media volume and Web Audio, boosts, runs voice
+  fix, and reports what it can't boost and what hum it found.
+- `extension/content/bridge.js`: runs in the extension's world; passes the level and voice fix from the background
+  to the page.
 - `extension/content/input.js`: the keys and modifier + scroll (on pages and over the dialog).
 - `extension/background.js`: remembers each tab's volume and the switches, pushes levels to tabs, and decides when
   capture mode runs.

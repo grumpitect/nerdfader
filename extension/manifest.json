@@ -36,6 +36,7 @@
         "<all_urls>"
       ],
       "js": [
+        "content/voice.js",
         "content/main.js"
       ],
       "world": "MAIN",

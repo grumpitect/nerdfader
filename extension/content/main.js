@@ -2,12 +2,15 @@
 // Scales everything the page plays by the tab's level without the page noticing:
 // - <audio>/<video>: the real volume is the page's volume times the level (up to 1), and the volume getter keeps
 //   returning the page's own value, so the site's slider still shows what the site set.
-// - Above 100%, elements are routed through Web Audio: a gain stage and a soft clipper, so loud parts are rounded off
-//   instead of crackling. Elements the browser won't let Web Audio hear (DRM, media from another site without
-//   CORS) are left alone, and the frame reports why so the extension can offer capture mode instead.
-// - Web Audio: connections to an AudioContext's destination go through one hidden gain stage per context.
-// bridge.js (the extension's isolated world) sends the level as a "nerdfader3:level" event on window, and passes
-// this frame's "nerdfader3:status" (why it can't boost, or "") back to the extension.
+// - Above 100%, or with voice fix on, elements are routed through Web Audio: a gain stage, voice fix and a soft
+//   clipper, so loud parts are rounded off instead of crackling (see content/voice.js, which runs just before this
+//   and hands it the stage and the hum detector). Elements the browser won't let Web Audio hear (DRM, media from
+//   another site without CORS) are left alone, and the frame reports why so the extension can offer capture mode
+//   instead.
+// - Web Audio: connections to an AudioContext's destination go through one hidden stage per context.
+// bridge.js (the extension's isolated world) sends the level as a "nerdfader3:level" event on window and voice fix
+// as "nerdfader3:voice" (1 or 0), and passes this frame's "nerdfader3:status" (why it can't boost, or "") and
+// "nerdfader3:hum" (the hum voice fix found: "50", "60" or "none") back to the extension.
 //
 // Updating the extension leaves the old copy of this script running in open tabs, cut off from the extension. The
 // new copy takes over: the old one undoes its patches and hands over what it was tracking (elements already routed
@@ -16,52 +19,32 @@
 // ("nerdfader3:") so cut-off copies of bridge.js from older builds, which threw when they heard one, never do.
 (() => {
   const KEY = Symbol.for("nerdfader");
+  const VOICE = Symbol.for("nerdfader.voice");
+  const tools = window[VOICE];
+  delete window[VOICE];
+  if (!tools) return;
   const previous = window[KEY]?.retire?.();
   if (window.__nerdfaderPatched) window.dispatchEvent(new CustomEvent("nerdfader:level", { detail: 1 }));
 
-  let level = 1;
+  let level = previous?.level ?? 1, voice = previous?.voice ?? false;
+  // Elements go through Web Audio only when that's needed: to boost past 100%, or for voice fix.
+  const needsGraph = () => level > 1 || voice;
   const NativeAudioContext = window.AudioContext;   // pages sometimes replace it later
   const connect = AudioNode.prototype.connect;
-  const softClipCurve = (() => {
-    const curve = new Float32Array(4097), knee = 0.6, ceiling = 0.97;
-    for (let i = 0; i < curve.length; i++) {
-      const x = ((i / (curve.length - 1)) * 2 - 1) * 8, a = Math.abs(x);
-      curve[i] = Math.sign(x) * (a < knee ? a : knee + (ceiling - knee) * Math.tanh((a - knee) / (ceiling - knee)));
-    }
-    return curve;
-  })();
   const disconnect = AudioNode.prototype.disconnect;
 
-  // A gain stage in front of a context's speakers. While boosting, a soft clipper sits after it: below 60% of full
-  // scale the sound passes unchanged, above that peaks are rounded off smoothly towards a 97% ceiling instead of being
-  // chopped off. That keeps nearly all of the boost on audio that is already loud (a limiter or compressor gives most
-  // of it back) without the crackle of plain clipping. The shaper's input range is -1..1, so the signal is scaled down
-  // by 8 on the way in (600% of a full-scale signal is 6).
-  function outputStage(ctx) {
-    const gain = ctx.createGain();
-    const scale = ctx.createGain();
-    scale.gain.value = 1 / 8;
-    const clipper = ctx.createWaveShaper();
-    clipper.curve = softClipCurve;
-    clipper.oversample = "4x";
-    connect.call(scale, clipper);
-    connect.call(clipper, ctx.destination);
-    let clipping = false;
-    const set = (value, glide = true) => {
-      const g = gain.gain;
-      g.cancelScheduledValues(0);
-      if (glide) g.setTargetAtTime(value, ctx.currentTime, 0.01);   // ~50 ms glide, no clicks while dragging
-      else g.value = value;
-      const boost = value > 1;
-      if (boost === clipping) return;
-      // Connect the new path before dropping the old one so there is no gap.
-      connect.call(gain, boost ? scale : ctx.destination);
-      disconnect.call(gain, boost ? ctx.destination : scale);
-      clipping = boost;
-    };
-    connect.call(gain, ctx.destination);
-    return { input: gain, set };
-  }
+  // Voice fix's hum notches. lock: the hum notched now (50, 60 or null). result: what was reported ("" until there
+  // is an answer, then "50", "60" or "none"). due: a check is wanted (at first, and when a new video has played a
+  // while).
+  const hum = previous?.hum ?? { lock: null, pitch: null, result: "", due: true };
+  // A stage in front of a context's speakers (content/voice.js). Stages handed over by an earlier copy, including
+  // version 1.2's simpler ones, are rebuilt around their input, which the page's sound is already routed into.
+  const outputStage = (ctx, input) => {
+    const stage = tools.outputStage(ctx, { connect, disconnect }, input);
+    stage.setFamily(hum.lock, hum.pitch);
+    stage.setVoice(voice, false);
+    return stage;
+  };
 
 
   // <audio> and <video>
@@ -108,7 +91,7 @@
   const play = media.play;
   const patchedPlay = function () {
     track(this);
-    if (level > 1) boost(this);
+    if (needsGraph()) boost(this);
     return play.apply(this, arguments);
   };
   media.play = patchedPlay;
@@ -125,7 +108,8 @@
   }
 
   // The boost stage for elements, created the first time something needs boosting.
-  let boostCtx = previous?.boostCtx ?? null, boostStage = previous?.boostStage ?? null, needsClick = false;
+  let boostCtx = previous?.boostCtx ?? null, needsClick = false;
+  let boostStage = previous?.boostStage ? outputStage(boostCtx, previous.boostStage.input) : null;
   // Browsers only let a page start Web Audio after a real interaction with it (a click, a normal key press; holding
   // Command or Shift, or Esc, doesn't count), unless the page may already play sound by itself. Starting it earlier
   // only gets a "not allowed to start" warning, so the boost stage waits for that.
@@ -137,12 +121,13 @@
   const mayStart = () => (navigator.userActivation?.hasBeenActive ?? true) || playingSound();
   const wake = () => {
     if (!navigator.userActivation?.hasBeenActive) return;   // this key or click didn't count as interacting
-    if (!boostCtx) { if (level > 1) each(boost); report(); }
+    if (!boostCtx) { if (needsGraph()) each(boost); report(); }
     else if (boostCtx.state !== "running") boostCtx.resume();
   };
   const check = () => {
     needsClick = boostCtx.state !== "running";
-    if (!needsClick && level > 1) each(boost);
+    if (!needsClick && needsGraph()) each(boost);
+    maybeDetect();
     report();
   };
   if (boostCtx) boostCtx.onstatechange = check;
@@ -167,6 +152,8 @@
       return;   // routed by an earlier copy that couldn't hand it over; it stays at up to 100%
     }
     routed.add(el);
+    maybeDetect();
+    if (counterWanted) setCounter(true);
   }
 
   // Report the first reason this frame can't boost something that is playing right now ("" if none).
@@ -188,7 +175,12 @@
     if (!(e.target instanceof HTMLMediaElement)) return;
     if (e.type === "encrypted") encrypted.add(e.target);
     track(e.target);
-    if (level > 1 && (e.type === "play" || e.type === "playing")) boost(e.target);
+    if (needsGraph() && (e.type === "play" || e.type === "playing")) boost(e.target);
+    const el = e.target;
+    if (routed.has(el) && (e.type === "loadstart" || e.type === "emptied" ||
+      (e.type === "playing" && sources.has(el) && sources.get(el) !== el.currentSrc))) newSource();
+    if (e.type === "playing") sources.set(el, el.currentSrc);
+    if (voice && e.type === "playing") stableVolume(true);   // the player may not have existed when voice fix came on
     report();
   };
   const mediaEvents = ["play", "playing", "pause", "ended", "emptied", "loadstart", "encrypted", "volumechange"];
@@ -197,9 +189,173 @@
   addEventListener("keydown", wake, true);
   addEventListener("click", wake, true);
 
+  // Hum detection, for voice fix, on the elements' sound only. It listens until it has an answer (content/voice.js),
+  // then changes the notches at a quiet moment, so the change can't be heard. A new video in the same element (the
+  // next one, an ad, a site that changes pages without loading one) keeps the notches, and is checked again once it
+  // has played 30 s: ads are usually over by then.
+  const sources = new WeakMap();   // element -> the media it played last
+  const timing = () => ({ lockAfter: 6, giveUpAfter: 60, recheckAfter: 30, ...window.__nerdfaderHumTiming });   // tests shorten these
+  let detection = null, fresh = null;
+  function maybeDetect() {
+    if (!hum.due || detection || fresh || !voice || !boostStage || boostCtx.state !== "running") return;
+    const analyser = boostCtx.createAnalyser();
+    analyser.fftSize = 16384;
+    analyser.smoothingTimeConstant = 0;
+    analyser.channelCount = 1;   // left and right mixed, as voice fix plays it
+    analyser.channelCountMode = "explicit";
+    connect.call(boostStage.input, analyser);
+    const detector = tools.humDetector({ sampleRate: boostCtx.sampleRate, fftSize: analyser.fftSize, ...timing() });
+    const spectrum = new Float32Array(analyser.frequencyBinCount), wave = new Float32Array(analyser.fftSize);
+    // Its first readings, before it has heard a whole window, are partly empty: they would look like quiet moments.
+    const full = boostCtx.currentTime + analyser.fftSize / boostCtx.sampleRate;
+    let found, pitch, since = 0;
+    const read = () => {
+      if (boostCtx.currentTime < full) return;
+      analyser.getFloatTimeDomainData(wave);
+      let sum = 0;
+      for (const v of wave) sum += v * v;
+      const rms = 10 * Math.log10(sum / wave.length);
+      if (found !== undefined) {
+        if (rms <= detector.quietLevel || Date.now() - since > 10000) done();
+        return;
+      }
+      analyser.getFloatFrequencyData(spectrum);
+      const answer = detector.frame(spectrum, rms);
+      if (answer === null) return;
+      found = answer === "none" ? null : answer;
+      pitch = detector.pitch;
+      since = Date.now();
+      if (found === hum.lock) done();
+    };
+    // (Turned off or taken over before this, the check is still due and starts again later.)
+    const done = () => {
+      hum.due = false;
+      stopDetect();
+      useHum(found, pitch);
+    };
+    detection = { analyser, timer: setInterval(read, 100) };
+  }
+  function stopDetect() {
+    if (!detection) return;
+    clearInterval(detection.timer);
+    try { disconnect.call(boostStage.input, detection.analyser); } catch {}   // already gone if the stage was rebuilt
+    detection = null;
+  }
+  function useHum(family, pitch) {
+    hum.lock = family;
+    hum.pitch = pitch;
+    hum.result = family ? String(family) : "none";
+    boostStage?.setFamily(family, pitch);
+    forEachStage((stage) => stage.setFamily(family, pitch));
+    tellHum();
+  }
+  const tellHum = () => hum.result && window.dispatchEvent(new CustomEvent("nerdfader3:hum", { detail: hum.result }));
+  function newSource() {
+    if (!voice) return;
+    stopDetect();
+    clearInterval(fresh?.timer);
+    fresh = null;
+    hum.due = true;
+    if (!hum.result) return maybeDetect();   // still listening: start over on the new one
+    let played = 0;
+    const after = timing().recheckAfter;
+    fresh = {
+      timer: setInterval(() => {
+        let playing = false;
+        each((el) => { playing ||= routed.has(el) && !el.paused && !el.ended; });
+        if (playing) played++;
+        if (played < after) return;
+        clearInterval(fresh.timer);
+        fresh = null;
+        maybeDetect();
+      }, 1000),
+    };
+  }
+
+  // YouTube's Stable Volume (on by default) plays a compressed copy of the sound: quiet moments come up 5 to 8 dB
+  // closer to the voice, and with them the hum and noise voice fix is there to take away. While voice fix is on, it
+  // is turned off in this tab's player, and back on when voice fix goes off. YouTube saves the choice for every tab,
+  // so the saved one is put back straight away: other tabs, and this one after a reload, keep the user's own.
+  // If the user changes Stable Volume themselves while voice fix is on, that's their choice: YouTube saves every change
+  // made in its menu (with the time, so even switching it back counts), and once that saved choice differs from the
+  // one put back here, the setting is left as they set it, now and when voice fix goes off. The extension keeps that
+  // for the tab ("nerdfader3:stableTheirs" out, "nerdfader3:stable" back in), so a reload leaves it alone too.
+  // These are the player's own methods. If they stop working (YouTube changed them), a moment later the player still
+  // reports Stable Volume, or can't say, and voice fix counters it instead: it turns quiet moments back down by about
+  // as much as Stable Volume lifted them (content/voice.js).
+  const onYouTube = () => /(^|\.)youtube(-nocookie)?\.com$/.test(location.hostname) || !!document.getElementById("movie_player");
+  const PREF = "yt-player-drc-pref";
+  const savedChoice = () => { try { return localStorage.getItem(PREF); } catch { return null; } };
+  // off: this tab's Stable Volume was turned off here. mark: the user's saved choice just after that. theirs: they
+  // changed it since, so it's theirs until voice fix goes off.
+  const stable = previous?.stable ?? { off: previous?.stableOff ?? false, mark: savedChoice(), theirs: false };
+  let stableCheck = 0, counterWanted = false, counter = null;
+  function stableVolume(off) {
+    if (!onYouTube()) return;
+    if (stable.off && savedChoice() !== stable.mark) {
+      Object.assign(stable, { off: false, theirs: true });
+      window.dispatchEvent(new Event("nerdfader3:stableTheirs"));
+    }
+    const player = document.getElementById("movie_player");
+    const turn = (on) => {
+      const saved = savedChoice();
+      player.setDrcUserPreference(on);
+      if (saved === null) localStorage.removeItem(PREF);
+      else localStorage.setItem(PREF, saved);
+    };
+    try {
+      if (off && !stable.off && !stable.theirs && typeof player?.setDrcUserPreference === "function" && player.getDrcUserPreference()) {
+        turn(false);
+        Object.assign(stable, { off: true, mark: savedChoice() });
+      } else if (!off && stable.off) {
+        turn(true);
+        stable.off = false;
+      }
+    } catch {}
+    if (!off) stable.theirs = false;
+    clearTimeout(stableCheck);
+    if (!off) return setCounter(false);
+    // Whether it worked shows once the player has switched to the other copy of the sound.
+    stableCheck = setTimeout(() => setCounter(voice && !stableVolumeIsOff()), 3000);
+  }
+  function stableVolumeIsOff() {
+    try {
+      const player = document.getElementById("movie_player");
+      return player.getDrcUserPreference() === false && !/\bDRC\b/.test(player.getStatsForNerds?.()?.volume ?? "");
+    } catch {
+      return false;
+    }
+  }
+  // The counter follows the level of the elements' sound every 25 ms.
+  function setCounter(on) {
+    counterWanted = on;
+    if (!on && counter) {
+      clearInterval(counter);
+      counter = null;
+      boostStage?.setCounter(false);
+    }
+    if (!on || counter || !boostStage) return;
+    const meter = boostStage.setCounter(true);
+    if (!meter) return;
+    const next = tools.stableVolumeCounter(), wave = new Float32Array(meter.fftSize);
+    counter = setInterval(() => {
+      meter.getFloatTimeDomainData(wave);
+      let sum = 0;
+      for (const v of wave) sum += v * v;
+      boostStage.counterTo(next(10 * Math.log10(sum / wave.length)));
+    }, 25);
+  }
+
   // Web Audio made by the page
   const stages = previous?.stages ?? new WeakMap();   // AudioContext -> its output stage
   const contexts = previous?.contexts ?? new Set();   // WeakRefs to those contexts
+  const forEachStage = (fn) => {
+    for (const ref of contexts) {
+      const ctx = ref.deref();
+      ctx ? fn(stages.get(ctx), ctx) : contexts.delete(ref);
+    }
+  };
+  if (previous) forEachStage((stage, ctx) => stages.set(ctx, outputStage(ctx, stage.input)));
 
   const stageFor = (ctx) => {
     let stage = stages.get(ctx);
@@ -233,12 +389,9 @@
     level = next;
     for (const el of document.querySelectorAll("audio, video")) track(el);
     each(apply);
-    if (level > 1) each(boost);
+    if (needsGraph()) each(boost);
     boostStage?.set(Math.max(level, 1));
-    for (const ref of contexts) {
-      const ctx = ref.deref();
-      ctx ? stages.get(ctx).set(level) : contexts.delete(ref);
-    }
+    forEachStage((stage) => stage.set(level));
     report();
   };
 
@@ -247,10 +400,33 @@
     if (n >= 0 && n <= 6) setLevel(n);
   };
   window.addEventListener("nerdfader3:level", onLevel);
+  const onVoice = (e) => {
+    const on = Number(e.detail) === 1;
+    if (on !== voice) {
+      voice = on;
+      if (voice) each(boost);
+      else stopDetect();
+      boostStage?.setVoice(voice);
+      forEachStage((stage) => stage.setVoice(voice));
+      maybeDetect();
+      report();
+    }
+    stableVolume(voice);   // (also after an update, which needs the counter started again)
+    if (voice) tellHum();   // a new copy of bridge.js asks again after an update
+  };
+  window.addEventListener("nerdfader3:voice", onVoice);
+  const onStable = (e) => { if (Number(e.detail) === 1 && !stable.off) stable.theirs = true; };
+  window.addEventListener("nerdfader3:stable", onStable);
 
   // Called by a newer copy of this script: undo everything here and hand over the state.
   const retire = () => {
     window.removeEventListener("nerdfader3:level", onLevel);
+    window.removeEventListener("nerdfader3:voice", onVoice);
+    window.removeEventListener("nerdfader3:stable", onStable);
+    stopDetect();
+    clearTimeout(stableCheck);
+    clearInterval(counter);
+    clearInterval(fresh?.timer);
     for (const type of mediaEvents) document.removeEventListener(type, onMedia, true);
     removeEventListener("pointerdown", wake, true);
     removeEventListener("keydown", wake, true);
@@ -261,7 +437,7 @@
     if (AudioNode.prototype.disconnect === patchedDisconnect) AudioNode.prototype.disconnect = disconnect;
     each((el) => volume.set.call(el, pageVolume.get(el)));
     if (boostCtx) boostCtx.onstatechange = null;
-    return { pageVolume, elements, routed, encrypted, boostCtx, boostStage, stages, contexts };
+    return { pageVolume, elements, routed, encrypted, boostCtx, boostStage, stages, contexts, level, voice, hum, stable };
   };
   Object.defineProperty(window, KEY, { value: { retire }, configurable: true });
   window.dispatchEvent(new Event("nerdfader3:ready"));

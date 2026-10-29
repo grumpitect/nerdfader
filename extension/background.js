@@ -10,6 +10,10 @@
 // the offscreen page instead. Capture only runs while it is needed: it stops soon after the tab stops playing, and
 // starts again when the tab plays. The browser only allows capturing a tab after the user opened Nerdfader on it,
 // so if a restart is refused, it waits until the popup is opened on that tab again.
+//
+// Voice fix (content/voice.js) is per tab too, kept in storage.session with the site it was turned on for: it stays
+// on across reloads and pages of that site, and turns off when the tab moves to another site. It runs in the page
+// only; capture mode doesn't do it.
 
 const DEFAULT = 100;
 const MAX = 600;
@@ -73,7 +77,10 @@ const key = {
   tab: (id) => `tab:${id}`,           // the tab's own percent
   blocked: (id) => `blocked:${id}`,   // { frameId: why that frame can't boost }
   capture: (id) => `capture:${id}`,   // { state: off | on | idle | paused, once: allowed for this tab }
+  voice: (id) => `voice:${id}`,       // { site, stableTheirs } while voice fix is on for the tab
+  hum: (id) => `hum:${id}`,           // { frameId: the hum voice fix found there: "50", "60" or "none" }
 };
+const tabKeys = (id) => Object.values(key).map((k) => k(id));
 const get = async (area, k, fallback) => (await chrome.storage[area].get(k))[k] ?? fallback;
 
 async function override() {
@@ -82,25 +89,45 @@ async function override() {
 }
 
 async function tabInfo(tabId) {
-  const [own, o, blocked, capture, captureAlways] = await Promise.all([
+  const [own, o, blocked, capture, captureAlways, voice, hums] = await Promise.all([
     get("session", key.tab(tabId), DEFAULT),
     override(),
     get("session", key.blocked(tabId), {}),
     get("session", key.capture(tabId), { state: "off", once: false }),
     get("local", "captureAlways", false),
+    get("session", key.voice(tabId), null),
+    get("session", key.hum(tabId), {}),
   ]);
   const percent = o.on ? o.percent : own;
   const status = Object.values(blocked).find(Boolean) ?? "";
   const allowed = captureAlways || capture.once;
-  return { own, override: o, percent, status, capture, captureAlways, allowed, need: percent > DEFAULT && status !== "" && allowed };
+  // The page's own answer, or else an embedded player's.
+  const hum = hums[0] || (Object.values(hums).find(Boolean) ?? "");
+  return {
+    own, override: o, percent, status, capture, captureAlways, allowed, voice: !!voice, hum,
+    stableTheirs: !!voice?.stableTheirs,
+    need: percent > DEFAULT && status !== "" && allowed,
+  };
 }
 
 // What the page itself should play at: while capture boosts the tab, the page only turns down, never up.
 const pageGain = (info) => (info.capture.state === "on" ? Math.min(gainOf(info.percent), 1) : gainOf(info.percent));
 
 function push(tabId, info) {
-  chrome.tabs.sendMessage(tabId, { type: "level", gain: pageGain(info) }).catch(() => {});
-  chrome.action.setBadgeText({ tabId, text: info.percent === DEFAULT ? "" : String(info.percent) }).catch(() => {});
+  chrome.tabs.sendMessage(tabId, { type: "level", gain: pageGain(info), voice: info.voice, stableTheirs: info.stableTheirs }).catch(() => {});
+  const text = info.percent !== DEFAULT ? String(info.percent) : info.voice ? "fix" : "";
+  chrome.action.setBadgeText({ tabId, text }).catch(() => {});
+}
+
+// The site a page belongs to, for voice fix: m.youtube.com and www.youtube.com are both youtube.com, bbc.co.uk
+// keeps its last three parts. (A short guess at the public suffix list, which extensions can't read.)
+function siteOf(url) {
+  let host;
+  try { host = new URL(url).hostname; } catch { return ""; }
+  if (!host || /^[\d.]+$|:/.test(host)) return host;
+  const parts = host.split(".");
+  const keep = parts.length > 2 && parts.at(-1).length === 2 && parts.at(-2).length <= 3 ? 3 : 2;
+  return parts.slice(-keep).join(".");
 }
 
 // Offscreen page that plays captured tabs back.
@@ -190,6 +217,8 @@ async function state(tabId) {
     capture: info.capture.state,
     allowed: info.allowed,
     captureAlways: info.captureAlways,
+    voice: info.voice,
+    hum: info.hum,
   };
 }
 
@@ -199,11 +228,14 @@ const handlers = {
     reloadIfFilesChanged();
     const tabId = sender.tab.id;
     if (sender.frameId === 0) {
-      // A new page: forget what the previous one reported.
-      await chrome.storage.session.remove(key.blocked(tabId));
+      // A new page: forget what the previous one reported. Voice fix stays on only on the same site.
+      const voice = await get("session", key.voice(tabId), null);
+      const gone = voice && voice.site !== siteOf(sender.url) ? [key.voice(tabId)] : [];
+      await chrome.storage.session.remove([key.blocked(tabId), key.hum(tabId), ...gone]);
       reconcile(tabId);   // also refreshes the badge after a navigation
     }
-    return { gain: pageGain(await tabInfo(tabId)) };
+    const info = await tabInfo(tabId);
+    return { gain: pageGain(info), voice: info.voice, stableTheirs: info.stableTheirs };
   },
   // From a page: why this frame can't boost what it is playing ("" when it can, or nothing is playing).
   async status(msg, sender) {
@@ -213,6 +245,20 @@ const handlers = {
     else delete blocked[sender.frameId];
     await chrome.storage.session.set({ [key.blocked(tabId)]: blocked });
     await reconcile(tabId);
+  },
+  // From a page: the hum voice fix found in this frame.
+  async hum(msg, sender) {
+    const tabId = sender.tab.id;
+    const hums = await get("session", key.hum(tabId), {});
+    hums[sender.frameId] = msg.hum;
+    await chrome.storage.session.set({ [key.hum(tabId)]: hums });
+  },
+  // From a page: the user changed YouTube's Stable Volume themselves while voice fix was on. Kept with the tab's voice
+  // fix, so a reload leaves it as they set it; it ends with voice fix (turned off, the tab closed, another site).
+  async stableTheirs(_msg, sender) {
+    const tabId = sender.tab.id;
+    const voice = await get("session", key.voice(tabId), null);
+    if (voice) await chrome.storage.session.set({ [key.voice(tabId)]: { ...voice, stableTheirs: true } });
   },
   // From the popup.
   async opened(msg) {
@@ -234,6 +280,16 @@ const handlers = {
     await chrome.storage.local.set(change);
     await reconcile(msg.tabId, { opened: true });
     reconcileAll();
+    return state(msg.tabId);
+  },
+  async setVoice(msg) {
+    if (msg.on) {
+      const tab = await chrome.tabs.get(msg.tabId);
+      await chrome.storage.session.set({ [key.voice(msg.tabId)]: { site: siteOf(tab.url) } });
+    } else {
+      await chrome.storage.session.remove(key.voice(msg.tabId));
+    }
+    await reconcile(msg.tabId);
     return state(msg.tabId);
   },
   // Allow capture mode for this tab (once) or for every tab that needs it (always), or turn "always" off.
@@ -315,7 +371,7 @@ chrome.runtime.onMessage.addListener((msg, sender, reply) => {
   if (msg?.target === "offscreen") return false;
   const handler = handlers[msg?.type];
   if (!handler) return false;
-  if (["hello", "status", "toggle", "nudge", "resetTab", "browserIs"].includes(msg.type) && !sender.tab) return false;
+  if (["hello", "status", "hum", "stableTheirs", "toggle", "nudge", "resetTab", "browserIs"].includes(msg.type) && !sender.tab) return false;
   if (msg.tabId === undefined && sender.tab) msg.tabId = sender.tab.id;   // the in-page dialog doesn't know its tab id
   handler(msg, sender).then(reply, (err) => reply({ error: String(err) }));
   return true;   // reply arrives asynchronously
@@ -364,14 +420,16 @@ chrome.tabs.onRemoved.addListener(async (tabId) => {
   clearTimeout(stopTimers.get(tabId));
   stopTimers.delete(tabId);
   await stopCapture(tabId).catch(() => {});
-  chrome.storage.session.remove([key.tab(tabId), key.blocked(tabId), key.capture(tabId)]);
+  chrome.storage.session.remove(tabKeys(tabId));
 });
 
 // Chrome sometimes swaps a tab for a prerendered one with a new id; carry the setting over.
 chrome.tabs.onReplaced.addListener(async (added, removed) => {
   const percent = await get("session", key.tab(removed), DEFAULT);
-  await chrome.storage.session.remove([key.tab(removed), key.blocked(removed), key.capture(removed)]);
+  const voice = await get("session", key.voice(removed), null);
+  await chrome.storage.session.remove(tabKeys(removed));
   if (percent !== DEFAULT) await chrome.storage.session.set({ [key.tab(added)]: percent });
+  if (voice) await chrome.storage.session.set({ [key.voice(added)]: voice });
 });
 
 // Loaded from a folder (Load unpacked: installs from GitHub, and development), the extension notices when its files on
@@ -385,7 +443,7 @@ chrome.tabs.onReplaced.addListener(async (added, removed) => {
 // The same "just loaded" moment attaches the new scripts to the tabs already open. As a last guard, three self-reloads
 // within ten minutes stop it. The last few loads are kept in storage.local ("loads") to see what a browser did.
 const WATCHED = [
-  "manifest.json", "background.js", "content/main.js", "content/bridge.js", "content/input.js",
+  "manifest.json", "background.js", "content/voice.js", "content/main.js", "content/bridge.js", "content/input.js",
   "ui/panel.js", "ui/overlay.js", "popup/popup.html", "popup/popup.js", "offscreen/offscreen.js",
 ];
 // null when any file couldn't be read: that means "can't tell", never "changed".
@@ -448,7 +506,7 @@ async function attachToOpenTabs() {
       func: () => document.querySelectorAll("nerdfader-dialog").forEach((d) => d.dispatchEvent(new Event("nerdfader-close"))),
     }).catch(() => {});
     chrome.scripting
-      .executeScript({ target, files: ["content/main.js"], world: "MAIN", injectImmediately: true })
+      .executeScript({ target, files: ["content/voice.js", "content/main.js"], world: "MAIN", injectImmediately: true })
       .then(() => chrome.scripting.executeScript({ target, files: ["content/bridge.js", "content/input.js"] }))
       .catch(() => {});   // pages the browser protects (the Web Store, other extensions)
   }

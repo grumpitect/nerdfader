@@ -53,17 +53,38 @@ function wav(...parts) {
   return b;
 }
 
+// A talk with 60 Hz mains hum, for voice fix: a 2.5 kHz "voice" in the left ear, the hum's odd harmonics in both.
+function talkWav(secs) {
+  const rate = 48000, total = secs * rate, b = Buffer.alloc(44 + total * 4);
+  b.write("RIFF", 0); b.writeUInt32LE(36 + total * 4, 4); b.write("WAVEfmt ", 8); b.writeUInt32LE(16, 16);
+  b.writeUInt16LE(1, 20); b.writeUInt16LE(2, 22); b.writeUInt32LE(rate, 24); b.writeUInt32LE(rate * 4, 28);
+  b.writeUInt16LE(4, 32); b.writeUInt16LE(16, 34); b.write("data", 36); b.writeUInt32LE(total * 4, 40);
+  let seed = 7;
+  const rand = () => ((seed = (seed * 1664525 + 1013904223) >>> 0) / 2 ** 32) * 2 - 1;
+  for (let i = 0; i < total; i++) {
+    const t = i / rate;
+    let hum = 0;
+    for (let h = 3; h <= 33; h += 2) hum += 0.002 * Math.sin(2 * Math.PI * 60 * h * t + h);
+    const voice = t % 1.5 < 1 ? 0.05 * Math.sin(2 * Math.PI * 2500 * t) : 0;
+    b.writeInt16LE(Math.round(32767 * (voice + hum + 0.0005 * rand())), 44 + i * 4);
+    b.writeInt16LE(Math.round(32767 * (hum + 0.0005 * rand())), 46 + i * 4);
+  }
+  return b;
+}
+
 // Pages: a player (same-origin tone, or one from the other origin), and Google's public ClearKey-encrypted (EME)
 // demo stream played with Shaka Player, as DRM sites do it.
 const files = {
   "/tone.wav": ["audio/wav", wav(60)],
+  "/talk.wav": ["audio/wav", talkWav(30)],
   "/player": ["text/html", `<!doctype html><title>player</title><body><h1>player</h1><script>
     const q = new URLSearchParams(location.search);
     if (q.get("src")) {
       const a = document.createElement("audio");
       a.id = "a"; a.loop = true; a.muted = q.has("muted"); a.src = q.get("src"); document.body.append(a);
       if (!q.has("paused")) a.play().catch((e) => (window.playError = String(e)));
-    }</script>`],
+    }
+    if (q.has("quickHum")) window.__nerdfaderHumTiming = { lockAfter: 1, giveUpAfter: 5 };</script>`],
   "/drm": ["text/html", `<!doctype html><title>drm</title><body><video id="a" width="320" loop></video>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/shaka-player/4.12.6/shaka-player.compiled.js"></script>
     <script>(async () => {
@@ -294,6 +315,31 @@ test("updating from 1.1 resets key and scroll choices to the new defaults once, 
   await install("working tree");
   assert.deepEqual((await call({ type: "state", tabId: 0 })).settings.scrollKeys, ["alt"], "kept after that");
   await call({ type: "setSettings", scrollKeys: ["shift", "meta"] });
+});
+
+test("updating from 1.2 over a boosted, playing tab: voice fix works on it, and nothing logs an error", async () => {
+  await install("v1.2.0");
+  const p = await open(`${origin}/player?src=/talk.wav&quickHum`);
+  await call({ type: "setTab", tabId: p.tabId, percent: 200 });   // 1.2 routes the element through its stage
+  await wait(500);
+  await clearErrors();
+  await install("working tree");
+  await call({ type: "setVoice", tabId: p.tabId, on: true });
+  assert.equal(await until(async () => (await state(p.tabId)).hum === "60", 8000), true, "hum found on the 1.2 stage");
+  assert.equal((await state(p.tabId)).status, "");
+  // (An update starts every tab at 100% again, as before: per-tab settings last as long as the extension runs.)
+  assert.equal(await bg((tabId) => chrome.action.getBadgeText({ tabId }), p.tabId), "fix");
+  await call({ type: "setTab", tabId: p.tabId, percent: 200 });
+  assert.equal(await bg((tabId) => chrome.action.getBadgeText({ tabId }), p.tabId), "200");
+  await p.page.evaluate(async () => { const a = document.getElementById("a"); a.pause(); await new Promise((r) => setTimeout(r, 200)); await a.play(); });
+  await wait(500);
+  // After another reload the page's new copy keeps the hum it found: turned on again, it says so straight away.
+  await install("working tree");
+  await call({ type: "setVoice", tabId: p.tabId, on: true });
+  assert.equal(await until(async () => (await state(p.tabId)).hum === "60", 800), true, "the hum found before the reload");
+  await call({ type: "setVoice", tabId: p.tabId, on: false });
+  assert.deepEqual(await errors(), []);
+  await p.page.close();
 });
 
 test("reloading the extension while tabs play: no errors, tabs keep working", async () => {
@@ -639,6 +685,24 @@ for (const [name, url, play] of [
         assert.ok(boosted / base > 2 && boosted / base < 5, `boosted about 3x (x${(boosted / base).toFixed(2)})`);
         assert.equal(status, "", "boosted in the page, no capture needed");
         await call({ type: "setTab", tabId: p.tabId, percent: 100 });
+        if (name === "YouTube") {
+          // Voice fix on a real player, and what the page does when the next video starts in the same element: voice
+          // fix checks the hum again after one, so the events it listens for must come.
+          await call({ type: "setVoice", tabId: p.tabId, on: true });
+          await wait(1000);
+          assert.equal((await state(p.tabId)).status, "", "voice fix runs in the page");
+          const events = await p.page.evaluate(async () => {
+            const v = document.querySelector("video"), seen = [];
+            for (const type of ["emptied", "loadstart"]) v.addEventListener(type, () => seen.push(type));
+            const next = [...document.querySelectorAll("a[href^='/watch?v=']")].find((a) => !a.href.includes("jNQXAC9IVRw"));
+            if (!next) return "no link to another video";
+            next.click();
+            await new Promise((r) => setTimeout(r, 5000));
+            return `${location.search} ${document.querySelector("video") === v ? "same element" : "new element"}: ${seen.join(", ") || "none"}`;
+          });
+          console.log(`    YouTube, next video: ${events}`);
+          await call({ type: "setVoice", tabId: p.tabId, on: false });
+        }
       } else console.log(`    ${name}: video didn't start here (sign-in or consent page?)`);
     }
     assert.deepEqual(await errors(), []);

@@ -66,7 +66,42 @@ function loudWav(secs) {
   }
   return b;
 }
-const sounds = { "/tone.wav": wav(30), "/gap.wav": wav(1, 5, 30), "/loud.wav": loudWav(30) };
+// A badly recorded talk, for voice fix, as 48 kHz stereo: the "voice" (a 2.5 kHz tone, 1 s on and 0.5 s off) only
+// in the left ear, 60 Hz mains hum (its odd harmonics, 180 to 1980 Hz) in both, and quiet background noise.
+const HUM = [180, 540, 900, 1500, 1980];   // hum harmonics the tests measure
+function talkWav(secs) {
+  const rate = 48000, total = secs * rate, b = Buffer.alloc(44 + total * 4);
+  b.write("RIFF", 0); b.writeUInt32LE(36 + total * 4, 4); b.write("WAVEfmt ", 8); b.writeUInt32LE(16, 16);
+  b.writeUInt16LE(1, 20); b.writeUInt16LE(2, 22); b.writeUInt32LE(rate, 24); b.writeUInt32LE(rate * 4, 28);
+  b.writeUInt16LE(4, 32); b.writeUInt16LE(16, 34); b.write("data", 36); b.writeUInt32LE(total * 4, 40);
+  let seed = 7;
+  const rand = () => ((seed = (seed * 1664525 + 1013904223) >>> 0) / 2 ** 32) * 2 - 1;
+  for (let i = 0; i < total; i++) {
+    const t = i / rate;
+    let hum = 0;
+    for (let h = 3; h <= 33; h += 2) hum += 0.002 * Math.sin(2 * Math.PI * 60 * h * t + h);
+    const voice = t % 1.5 < 1 ? 0.05 * Math.sin(2 * Math.PI * 2500 * t) : 0;
+    b.writeInt16LE(Math.round(32767 * (voice + hum + 0.0005 * rand())), 44 + i * 4);
+    b.writeInt16LE(Math.round(32767 * (hum + 0.0005 * rand())), 46 + i * 4);
+  }
+  return b;
+}
+// Talk the way YouTube's Stable Volume leaves it: the voice (2.5 kHz, 1 s) and pauses (0.5 s of 700 Hz) only 10 dB
+// apart.
+function liftedWav(secs) {
+  const rate = 48000, total = secs * rate, b = Buffer.alloc(44 + total * 4);
+  b.write("RIFF", 0); b.writeUInt32LE(36 + total * 4, 4); b.write("WAVEfmt ", 8); b.writeUInt32LE(16, 16);
+  b.writeUInt16LE(1, 20); b.writeUInt16LE(2, 22); b.writeUInt32LE(rate, 24); b.writeUInt32LE(rate * 4, 28);
+  b.writeUInt16LE(4, 32); b.writeUInt16LE(16, 34); b.write("data", 36); b.writeUInt32LE(total * 4, 40);
+  for (let i = 0; i < total; i++) {
+    const t = i / rate;
+    const v = t % 1.5 < 1 ? 0.05 * Math.sin(2 * Math.PI * 2500 * t) : 0.0158 * Math.sin(2 * Math.PI * 700 * t);
+    b.writeInt16LE(Math.round(32767 * v), 44 + i * 4);
+    b.writeInt16LE(Math.round(32767 * v), 46 + i * 4);
+  }
+  return b;
+}
+const sounds = { "/tone.wav": wav(30), "/gap.wav": wav(1, 5, 30), "/loud.wav": loudWav(30), "/talk.wav": talkWav(30), "/lifted.wav": liftedWav(40) };
 
 before(async () => {
   server = http.createServer((req, res) => {
@@ -303,8 +338,9 @@ test("Web Audio goes through a gain node that follows the tab's volume", async (
     osc.start();
   });
   assert.equal(await page.evaluate(() => window.returned), true, "connect() returns the destination for chaining");
-  // The extension's gain stage first, then a trim stage that undoes the limiter's make-up gain.
-  assert.equal(await page.evaluate(() => created.length), 2);
+  // The extension's stage: its input (the level) first, then the dry path, its output and the clipper's input
+  // scaling. Voice fix's path is only built once it is turned on.
+  assert.equal(await page.evaluate(() => created.length), 4);
   near(await page.evaluate(() => created[0].gain.value), 1);
 
   await send({ type: "setTab", tabId, percent: 40 });
@@ -322,7 +358,7 @@ test("Web Audio goes through a gain node that follows the tab's volume", async (
     const off = new OfflineAudioContext(1, 128, 44100);
     off.createOscillator().connect(off.destination);
     return created.length;
-  }), 2);
+  }), 4);
   await page.close();
 });
 
@@ -332,7 +368,7 @@ test("tabs opened before the extension loaded get it when it is installed", asyn
   const { page, tabId } = await openTestPage();
   await ext.evaluate(async (tabId) => {
     const target = { tabId, allFrames: true };
-    await chrome.scripting.executeScript({ target, files: ["content/main.js"], world: "MAIN" });
+    await chrome.scripting.executeScript({ target, files: ["content/voice.js", "content/main.js"], world: "MAIN" });
     await chrome.scripting.executeScript({ target, files: ["content/bridge.js"] });
   }, tabId);
   await send({ type: "setTab", tabId, percent: 50 });
@@ -365,12 +401,12 @@ test("the toolbar popup (for pages the dialog can't open in) shows and changes t
   await popup.locator(".percent", { hasText: "100%" }).waitFor();
   assert.equal(await popup.locator(".reset").isDisabled(), true);
 
-  await popup.click("label.toggle >> nth=0");
+  await popup.click("label.toggle:has(.override)");
   await popup.locator(".target", { hasText: "all tabs" }).waitFor();
   await popup.keyboard.press("3");
   await settle();
   near((await real(tabId)).a, 0.8 * gain(30));
-  await popup.click("label.toggle >> nth=0");
+  await popup.click("label.toggle:has(.override)");
   await popup.locator(".target", { hasText: "127.0.0.1" }).waitFor();
   await send({ type: "setOverride", on: false, percent: 100 });
   await send({ type: "setTab", tabId, percent: 100 });
@@ -510,7 +546,7 @@ test("the toolbar icon opens a dialog in the page that changes the tab, and clos
   // SCREENSHOT=docs/dialog.png npm test: renders the dialog for the README.
   if (process.env.SCREENSHOT) {
     const demo = await context.newPage();
-    await demo.setViewportSize({ width: 880, height: 560 });
+    await demo.setViewportSize({ width: 880, height: 620 });
     const demoOrigin = origin.replace("127.0.0.1", "video.example");
     await demo.goto(demoOrigin + "/demo");
     const demoId = await tabIdOf(demoOrigin);
@@ -542,7 +578,7 @@ test("a newer copy of the page script takes over from an older one, boosts inclu
   // What an extension update does to open tabs: inject the new scripts next to the old ones.
   await ext.evaluate(async (tabId) => {
     const target = { tabId, allFrames: true };
-    await chrome.scripting.executeScript({ target, files: ["content/main.js"], world: "MAIN" });
+    await chrome.scripting.executeScript({ target, files: ["content/voice.js", "content/main.js"], world: "MAIN" });
     await chrome.scripting.executeScript({ target, files: ["content/bridge.js"] });
   }, tabId);
   await send({ type: "setTab", tabId, percent: 200 });
@@ -559,7 +595,7 @@ test("version 1.0's page script left in an open tab doesn't stop the new one", a
   // Load 1.0's main.js and then this one into a plain page, the way an update leaves them, and drive them by hand.
   const { execSync } = await import("node:child_process");
   const old = execSync("git show v1.0.0:extension/content/main.js").toString();
-  const now = fs.readFileSync(EXT + "/content/main.js", "utf8");
+  const now = ["voice.js", "main.js"].map((f) => fs.readFileSync(`${EXT}/content/${f}`, "utf8")).join("\n");
   const plain = await chromium.launch();   // no extension, so only these two copies run
   const page = await plain.newPage();
   await page.goto(origin + "/player");
@@ -739,9 +775,9 @@ test("nothing in the panel takes focus or shows a focus ring; the panel keeps th
   assert.equal(focusables, 0, "no control is in the Tab order");
   const active = () => popup.evaluate(() => document.activeElement.className);
   assert.match(await active(), /\bnf\b/, "the panel holds focus");
-  await popup.click("label.toggle >> nth=0");   // all_tabs on
+  await popup.click("label.toggle:has(.override)");   // all_tabs on
   assert.match(await active(), /\bnf\b/, "clicking a switch leaves focus on the panel");
-  await popup.click("label.toggle >> nth=0");   // and off again
+  await popup.click("label.toggle:has(.override)");   // and off again
   await popup.keyboard.press("Tab");
   assert.match(await active(), /\bnf\b/, "Tab doesn't move focus");
   await popup.keyboard.press("5");
@@ -837,11 +873,11 @@ test("capture mode's info button explains it without flipping the switch; the sc
   await popup.goto(ext.url());
   await popup.locator(".percent", { hasText: "100%" }).waitFor();
   assert.equal(await popup.locator(".captureInfo").isVisible(), false);
-  await popup.click(".infoBtn");
+  await popup.click('.infoBtn[data-info="captureInfo"]');
   assert.equal(await popup.locator(".captureInfo").isVisible(), true, "explanation shown");
   assert.match(await popup.locator(".captureInfo").textContent(), /records the tab's sound/);
   assert.equal(await popup.locator(".alwaysToggle").isChecked(), false, "switch untouched");
-  await popup.click(".infoBtn");
+  await popup.click('.infoBtn[data-info="captureInfo"]');
   assert.equal(await popup.locator(".captureInfo").isVisible(), false, "and hidden again");
   assert.equal(await popup.locator(".captureHint").textContent(), "if on, allows a volume boost by recording the tab");
   const lines = await popup.locator(".captureInfo p").allTextContents();
@@ -1030,4 +1066,246 @@ test("in a browser that uses a default key itself, that key falls back to Comman
   assert.equal((await keysOf()).resetShortcut.code, "KeyR");
   await sw.evaluate(() => chrome.storage.local.remove("resetShortcut"));
   await sw.evaluate(() => chrome.storage.local.set({ browser: "arc" }));
+});
+
+// What the tab outputs, per ear: RMS in dB, and the level (dB) at given frequencies, from tab capture.
+const ears = (tabId, freqs = []) =>
+  ext.evaluate(async ([tabId, freqs]) => {
+    const id = await chrome.tabCapture.getMediaStreamId({ targetTabId: tabId });
+    const stream = await navigator.mediaDevices.getUserMedia({
+      audio: { mandatory: { chromeMediaSource: "tab", chromeMediaSourceId: id } },
+    });
+    const ctx = new AudioContext({ sampleRate: 48000 });
+    const split = ctx.createChannelSplitter(2);
+    ctx.createMediaStreamSource(stream).connect(split);
+    const meters = [0, 1].map((ch) => {
+      const m = ctx.createAnalyser();
+      m.fftSize = 16384;
+      m.smoothingTimeConstant = 0;
+      split.connect(m, ch);
+      return m;
+    });
+    const sums = [0, 0], peaks = [freqs.map(() => 0), freqs.map(() => 0)];
+    const wave = new Float32Array(16384), spectrum = new Float32Array(8192);
+    let n = 0;
+    for (let i = 0; i < 6; i++) {
+      await new Promise((r) => setTimeout(r, 250));
+      meters.forEach((m, ch) => {
+        m.getFloatTimeDomainData(wave);
+        for (const v of wave) sums[ch] += v * v;
+        m.getFloatFrequencyData(spectrum);
+        freqs.forEach((f, k) => {
+          const bin = Math.round(f / (48000 / 16384));
+          peaks[ch][k] += 10 ** (Math.max(spectrum[bin - 1], spectrum[bin], spectrum[bin + 1]) / 10);
+        });
+      });
+      n += wave.length;
+    }
+    stream.getTracks().forEach((t) => t.stop());
+    await ctx.close();
+    const db = (x) => 10 * Math.log10(x);
+    return [0, 1].map((ch) => ({ rms: db(sums[ch] / n), at: peaks[ch].map((p) => db(p / 6)) }));
+  }, [tabId, freqs]);
+
+test("voice fix mixes to mono, finds the hum and notches it out; turning it off brings the stereo back", async () => {
+  const { page, tabId } = await openPlayer("/talk.wav");
+  await page.evaluate(() => (window.__nerdfaderHumTiming = { lockAfter: 1, giveUpAfter: 5 }));   // quicker than 6 s
+  const before = await ears(tabId, HUM);
+  assert.ok(before[0].rms - before[1].rms > 10, `the voice is in the left ear only (${before[0].rms.toFixed(1)} / ${before[1].rms.toFixed(1)} dB)`);
+
+  const reply = await send({ type: "setVoice", tabId, on: true });
+  assert.equal(reply.voice, true);
+  assert.equal(await sw.evaluate((tabId) => chrome.action.getBadgeText({ tabId }), tabId), "fix", "badge at 100%");
+  assert.equal(await until(async () => (await send({ type: "state", tabId })).hum === "60", 8000), true, "60 Hz hum found");
+  await wait(1500);   // the notches go in at a quiet moment
+  const on = await ears(tabId, HUM);
+  assert.ok(Math.abs(on[0].rms - on[1].rms) < 0.5, `both ears the same (${on[0].rms.toFixed(1)} / ${on[1].rms.toFixed(1)} dB)`);
+  assert.ok(Math.abs(on[0].rms - (before[0].rms - 3)) < 1.5, `the voice mixed in at 0.71 (${before[0].rms.toFixed(1)} to ${on[0].rms.toFixed(1)} dB)`);
+  HUM.forEach((f, k) => {
+    const drop = before[1].at[k] - on[1].at[k];
+    assert.ok(drop > 15, `hum at ${f} Hz down ${drop.toFixed(1)} dB`);
+  });
+  assert.equal((await send({ type: "state", tabId })).status, "", "nothing reported as blocked");
+
+  await send({ type: "setVoice", tabId, on: false });
+  assert.equal(await sw.evaluate((tabId) => chrome.action.getBadgeText({ tabId }), tabId), "");
+  await wait(300);
+  const off = await ears(tabId, HUM);
+  assert.ok(off[0].rms - off[1].rms > 10, "stereo again");
+  assert.ok(Math.abs(off[1].at[2] - before[1].at[2]) < 2, "and the hum back as it was");
+  await page.close();
+});
+
+test("voice fix's filters: less boom, 200 Hz down 4 dB, deep notches up to 6 kHz, the rest untouched", async () => {
+  // The stage itself, in an OfflineAudioContext: a tone through it with voice fix on, against the same tone with it off.
+  const page = await context.newPage();
+  await page.goto(origin + "/player");
+  await page.addScriptTag({ path: EXT + "/content/voice.js" });
+  const response = await page.evaluate(async () => {
+    const tools = window[Symbol.for("nerdfader.voice")];
+    const level = async (f, on) => {
+      const ctx = new OfflineAudioContext(2, 48000, 48000);
+      const stage = tools.outputStage(ctx, { connect: AudioNode.prototype.connect, disconnect: AudioNode.prototype.disconnect });
+      stage.setFamily(60);
+      stage.setVoice(on, false);
+      const osc = new OscillatorNode(ctx, { frequency: f });
+      const amp = new GainNode(ctx, { gain: 0.1 });
+      osc.connect(amp).connect(stage.input);
+      osc.start();
+      const out = (await ctx.startRendering()).getChannelData(0).subarray(24000);
+      let sum = 0;
+      for (const v of out) sum += v * v;
+      return 10 * Math.log10(sum / out.length);
+    };
+    const result = {};
+    for (const f of [40, 200, 600, 900, 1000, 1980, 2500, 4000, 4500, 6000, 8000]) result[f] = (await level(f, true)) - (await level(f, false));
+    return result;
+  });
+  // A mono source comes out 3 dB louder (0.71 of left plus 0.71 of right), as in the samples. Expected values are the
+  // filters' own response plus those 3 dB, worked out from the standard (RBJ) filter formulas the browser uses.
+  const expect = { 40: -9.47, 200: -1.21, 600: 2.23, 1000: 0.27, 2500: 2.55, 4000: 2.01, 6000: 2.88, 8000: 3.01 };
+  for (const [f, want] of Object.entries(expect)) {
+    assert.ok(Math.abs(response[f] - want) < 0.1, `${f} Hz: expected ${want} dB, got ${response[f].toFixed(2)}`);
+  }
+  for (const f of [900, 1980, 4500]) assert.ok(response[f] < -30, `notch at ${f} Hz: ${response[f].toFixed(1)} dB`);
+  await page.close();
+});
+
+test("voice fix: the switch, its v key, explanation and hints; it stays on for the site and turns off on another", async () => {
+  const { page, tabId } = await openPlayer("/talk.wav");
+  await page.evaluate(() => (window.__nerdfaderHumTiming = { lockAfter: 1, giveUpAfter: 5 }));
+  const popup = await context.newPage();
+  await popup.addInitScript(([tabId, url]) => { chrome.tabs.query = async () => [{ id: tabId, url }]; }, [tabId, page.url()]);
+  await popup.goto(ext.url());
+  await popup.locator(".percent", { hasText: "100%" }).waitFor();
+  assert.equal(await popup.locator(".voiceToggle").isChecked(), false, "off by default");
+  assert.equal(await popup.locator(".voiceHint").textContent(), "for talks: voice in both ears, less hum and boom");
+  await popup.click('.infoBtn[data-info="voiceInfo"]');
+  assert.equal(await popup.locator(".voiceInfo").isVisible(), true, "explanation shown");
+  assert.equal(await popup.locator(".voiceToggle").isChecked(), false, "switch untouched");
+  const lines = await popup.locator(".voiceInfo p").allTextContents();
+  assert.ok(lines.some((l) => l.startsWith("Off:")) && lines.some((l) => l.startsWith("On:")), "Off and On on their own lines");
+
+  await popup.keyboard.press("v");
+  await popup.locator(".voiceHint", { hasText: /^on/ }).waitFor();
+  assert.equal(await popup.locator(".voiceToggle").isChecked(), true);
+  await popup.locator(".voiceHint", { hasText: "on · 60 Hz hum removed" }).waitFor({ timeout: 8000 });
+  assert.equal((await send({ type: "state", tabId })).voice, true);
+
+  // A reload keeps it, and the new page finds the hum again.
+  await page.reload();
+  await page.evaluate(async () => {
+    window.__nerdfaderHumTiming = { lockAfter: 1, giveUpAfter: 5 };
+    const a = document.createElement("audio");
+    a.src = "/talk.wav"; a.loop = true; document.body.append(a);
+    await a.play();
+  });
+  assert.equal((await send({ type: "state", tabId })).voice, true, "kept on a reload");
+  assert.equal(await until(async () => (await send({ type: "state", tabId })).hum === "60", 8000), true, "found again");
+  // Another site turns it off.
+  await page.goto(otherOrigin + "/player");
+  assert.equal(await until(async () => (await send({ type: "state", tabId })).voice === false, 3000), true, "off on another site");
+  await page.goto(origin + "/player");
+  assert.equal((await send({ type: "state", tabId })).voice, false, "and stays off");
+  await popup.close();
+  await page.close();
+});
+
+test("a page script from version 1.2 hands over to voice fix, boosted element included", async () => {
+  const { execSync } = await import("node:child_process");
+  const old = execSync("git show v1.2.0:extension/content/main.js").toString();
+  const now = ["voice.js", "main.js"].map((f) => fs.readFileSync(`${EXT}/content/${f}`, "utf8")).join("\n");
+  const { page, tabId } = await openPlayer("/talk.wav");
+  await page.addScriptTag({ content: old });   // 1.2 takes the page over, as it ran before the update
+  await send({ type: "setTab", tabId, percent: 200 });   // and routes the element through its own stage
+  await settle();
+  const boosted = await ears(tabId);
+  await send({ type: "setTab", tabId, percent: 100 });
+  await settle();
+  const base = await ears(tabId);
+  assert.ok(Math.abs(boosted[0].rms - base[0].rms - 6) < 1, "1.2 boosted it");
+  await page.evaluate(() => (window.__nerdfaderHumTiming = { lockAfter: 1, giveUpAfter: 5 }));
+  await page.addScriptTag({ content: now });   // the update
+  await send({ type: "setVoice", tabId, on: true });
+  assert.equal(await until(async () => (await send({ type: "state", tabId })).hum === "60", 8000), true, "hum found");
+  await wait(1000);
+  const on = await ears(tabId);
+  assert.ok(Math.abs(on[0].rms - on[1].rms) < 0.5, `mono through the rebuilt stage (${on[0].rms.toFixed(1)} / ${on[1].rms.toFixed(1)} dB)`);
+  await send({ type: "setTab", tabId, percent: 200 });
+  await settle();
+  const both = await ears(tabId);
+  assert.ok(Math.abs(both[0].rms - on[0].rms - 6) < 1, "and still boosts");
+  await send({ type: "setTab", tabId, percent: 100 });
+  await send({ type: "setVoice", tabId, on: false });
+  await page.close();
+});
+
+test("on YouTube, voice fix turns Stable Volume off in that tab only, or counters it when the player won't", async () => {
+  // A stand-in for YouTube's player, with the methods voice fix uses; Stable Volume on, as YouTube starts it.
+  const fakePlayer = (page, { canSwitch }) => page.evaluate((canSwitch) => {
+    window.__nerdfaderHumTiming = { lockAfter: 1, giveUpAfter: 2 };
+    const p = document.createElement("div");
+    p.id = "movie_player";
+    document.body.append(p);
+    window.drc = 1;
+    p.getDrcUserPreference = () => window.drc;
+    // Like YouTube: every change is saved for all tabs, with the time.
+    if (canSwitch) p.setDrcUserPreference = (on) => { window.drc = on; localStorage.setItem("yt-player-drc-pref", JSON.stringify({ data: String(on), creation: performance.now() })); };
+    window.menu = (on) => p.setDrcUserPreference(on);   // the user, in YouTube's settings menu
+    p.getStatsForNerds = () => ({ volume: window.drc ? "100%/100% DRC (cont.-17.2dB tgt.-14.0dB)" : "100%/100% (cont.-18.7dB tgt.-14.0dB)" });
+    localStorage.setItem("yt-player-drc-pref", "saved by the user");
+  }, canSwitch);
+  const pauseLevel = async (tabId) => (await ears(tabId, [700]))[0].at[0];
+
+  const { page, tabId } = await openPlayer("/lifted.wav");
+  await fakePlayer(page, { canSwitch: true });
+  await send({ type: "setVoice", tabId, on: true });
+  await wait(300);
+  assert.equal(await page.evaluate(() => window.drc), false, "Stable Volume off in this player");
+  assert.equal(await page.evaluate(() => localStorage.getItem("yt-player-drc-pref")), "saved by the user", "the user's saved choice kept");
+  await wait(5000);   // past the check, and long enough for the counter to have acted if it ran
+  const switched = await pauseLevel(tabId);
+  await send({ type: "setVoice", tabId, on: false });
+  await wait(300);
+  assert.equal(await page.evaluate(() => window.drc), true, "back on with voice fix off");
+  assert.equal(await page.evaluate(() => localStorage.getItem("yt-player-drc-pref")), "saved by the user");
+
+  // The user changes it themselves while voice fix is on: theirs from then on.
+  await send({ type: "setVoice", tabId, on: true });
+  await wait(300);
+  assert.equal(await page.evaluate(() => window.drc), false);
+  await page.evaluate(() => window.menu(true));   // they want it on
+  await page.evaluate(async () => { const a = document.getElementById("a"); a.pause(); await a.play(); });   // the player's next "playing"
+  await wait(300);
+  assert.equal(await page.evaluate(() => window.drc), true, "not switched off again");
+  // A reload of that tab keeps their choice: YouTube starts with Stable Volume on, as they saved it, and stays so.
+  await page.reload();
+  await fakePlayer(page, { canSwitch: true });
+  await page.evaluate(async () => { const a = document.createElement("audio"); a.id = "a"; a.src = "/lifted.wav"; a.loop = true; document.body.append(a); await a.play(); });
+  await wait(500);
+  assert.equal((await send({ type: "state", tabId })).voice, true, "voice fix still on after the reload");
+  assert.equal(await page.evaluate(() => window.drc), 1, "their Stable Volume left on after the reload");
+  await page.evaluate(() => window.menu(false));   // and then off after all
+  await send({ type: "setVoice", tabId, on: false });
+  await wait(300);
+  assert.equal(await page.evaluate(() => window.drc), false, "left off as they set it when voice fix goes off");
+  // Voice fix on again later: a fresh start, so Stable Volume is switched off for it again.
+  await page.evaluate(() => window.menu(true));
+  await send({ type: "setVoice", tabId, on: true });
+  await wait(300);
+  assert.equal(await page.evaluate(() => window.drc), false, "switched off again for a new voice fix");
+  await send({ type: "setVoice", tabId, on: false });
+  await page.close();
+
+  // YouTube changed its player: no way to switch. The counter turns the lifted pauses back down.
+  const other = await openPlayer("/lifted.wav");
+  await fakePlayer(other.page, { canSwitch: false });
+  await send({ type: "setVoice", tabId: other.tabId, on: true });
+  await wait(6000);   // the check, then a few seconds of levels
+  const countered = await pauseLevel(other.tabId);
+  console.log(`    pauses: ${switched.toFixed(1)} dB with Stable Volume switched off (no counter), ${countered.toFixed(1)} dB countered`);
+  // About 6 dB once a pause has settled; it eases in over the first ~80 ms of each, so the average is lower.
+  assert.ok(switched - countered > 3, `pauses turned down ${(switched - countered).toFixed(1)} dB`);
+  await send({ type: "setVoice", tabId: other.tabId, on: false });
+  await other.page.close();
 });

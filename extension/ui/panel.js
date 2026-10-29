@@ -89,6 +89,7 @@ globalThis.NerdfaderPanel = (() => {
 .nf .rule { margin: 10px 0; border-top: 1px dashed var(--edge); }
 
 .nf .toggle { display: flex; align-items: center; gap: 8px; cursor: pointer; }
+.nf .voiceRow { margin-top: 8px; }
 .nf .toggle input { position: absolute; opacity: 0; pointer-events: none; }
 .nf .caret { color: var(--pink); visibility: hidden; }
 .nf .toggle input:checked ~ .caret { visibility: visible; }
@@ -135,7 +136,7 @@ globalThis.NerdfaderPanel = (() => {
 .nf footer a { color: var(--muted); text-decoration: none; }
 .nf footer a:hover { color: var(--cyan); }
 
-.nf.unsupported .vol, .nf.unsupported .row { opacity: 0.4; pointer-events: none; }
+.nf.unsupported .vol, .nf.unsupported .row, .nf.unsupported .voiceRow { opacity: 0.4; pointer-events: none; }
 `;
 
   const html = `
@@ -166,6 +167,21 @@ globalThis.NerdfaderPanel = (() => {
   </div>
   <p class="hint">The tab shows as shared while it's boosted. Capture stops when the tab goes quiet.</p>
 </div>
+<label class="toggle voiceRow" title="voice fix (v)">
+  <input type="checkbox" class="voiceToggle">
+  <span class="caret">&gt;</span>
+  <span class="name">voice_fix <button class="infoBtn" data-info="voiceInfo" title="What is voice fix?" aria-label="What is voice fix?">i</button></span>
+  <span class="switch" aria-hidden="true"></span>
+</label>
+<div class="hint voiceHint"></div>
+<div class="info voiceInfo" hidden>
+  <p>Fixes badly recorded talks: a voice in one ear, mains hum, a boomy low end.</p>
+  <p><b>Off:</b> the tab plays as sent.</p>
+  <p><b>On:</b> for this tab. Turn it off for music: it loses its stereo.</p>
+  <p>On YouTube it also turns off Stable Volume in that tab while it's on: that setting lifts the quiet moments, and
+  the hum with them.</p>
+  <p>Once on, the page's sound goes through Nerdfader until you reload the page.</p>
+</div>
 <div class="rule"></div>
 <label class="toggle">
   <input type="checkbox" class="override">
@@ -177,7 +193,7 @@ globalThis.NerdfaderPanel = (() => {
 <label class="toggle">
   <input type="checkbox" class="alwaysToggle">
   <span class="caret">&gt;</span>
-  <span class="name">capture_mode <button class="infoBtn" title="What is capture mode?" aria-label="What is capture mode?">i</button></span>
+  <span class="name">capture_mode <button class="infoBtn" data-info="captureInfo" title="What is capture mode?" aria-label="What is capture mode?">i</button></span>
   <span class="switch" aria-hidden="true"></span>
 </label>
 <div class="hint captureHint"></div>
@@ -375,6 +391,14 @@ globalThis.NerdfaderPanel = (() => {
       $("alwaysToggle").checked = state.captureAlways;
       $("captureHint").textContent = "if on, allows a volume boost by recording the tab";
 
+      $("voiceToggle").checked = supported && state.voice;
+      $("voiceHint").textContent = !supported || !state.voice ? "for talks: voice in both ears, less hum and boom"
+        : state.status === "click" ? "on · click the page to start"
+        : state.status && state.status !== "unknown" ? "on · this site can't be fixed"
+        : state.hum === "none" ? "on · no hum found"
+        : state.hum ? `on · ${state.hum} Hz hum removed`
+        : "on";
+
       const settings = state.settings ?? { shortcut: null, resetShortcut: null, upShortcut: null, downShortcut: null, altScroll: true, scrollKeys: ["shift", "meta"] };
       for (const b of root.querySelectorAll(".shortcutBtn")) {
         const which = b.dataset.setting, value = settings[which];
@@ -430,11 +454,24 @@ globalThis.NerdfaderPanel = (() => {
     for (const b of root.querySelectorAll(".shortcutBtn")) {
       b.addEventListener("click", () => { recording = recording === b.dataset.setting ? null : b.dataset.setting; render(); });
     }
-    $("infoBtn").addEventListener("click", (e) => {
-      e.preventDefault();   // inside the switch's label: open the explanation, don't flip the switch
-      e.stopPropagation();
-      $("captureInfo").hidden = !$("captureInfo").hidden;
-      $("infoBtn").classList.toggle("open", !$("captureInfo").hidden);
+    for (const b of root.querySelectorAll(".infoBtn")) {
+      b.addEventListener("click", (e) => {
+        e.preventDefault();   // inside the switch's label: open the explanation, don't flip the switch
+        e.stopPropagation();
+        const info = $(b.dataset.info);
+        info.hidden = !info.hidden;
+        b.classList.toggle("open", !info.hidden);
+      });
+    }
+    function setVoice(on) {
+      if (!supported) return;
+      state.voice = on;
+      render();
+      send("setVoice", { on });
+    }
+    $("voiceToggle").addEventListener("change", (e) => {
+      setVoice(e.target.checked);
+      root.focus();
     });
     for (const b of root.querySelectorAll(".pick")) {
       // Each one switches on and off; the last one on stays on.
@@ -507,6 +544,7 @@ globalThis.NerdfaderPanel = (() => {
       else if (e.key === "PageDown" || e.key === "Home") p = 0;
       else if (/^[0-9]$/.test(e.key)) p = Number(e.key) * 10;
       else if (e.key === "r") p = DEFAULT;
+      else if (e.key === "v" && supported) { e.preventDefault(); setVoice(!state.voice); return; }
       if (p === null) return;
       e.preventDefault();
       setPercent(p);
