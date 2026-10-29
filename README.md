@@ -8,7 +8,8 @@ Nerdfader is a small, free, open-source browser extension for Arc, Chrome and ot
 icon (or press ⌘⇧End), and a small dialog opens in the middle of the page over a blurred backdrop. Drag the slider,
 and that tab gets quieter (or louder). Click anywhere outside it, press Esc, or click the icon again to close it.
 Most sites are boosted from inside the page, with no "this tab is being shared" highlight; capture mode is only
-used, with your OK, for the few sites that block that.
+used, with your OK, for the few sites that block that. For a badly recorded talk, **voice_fix** puts the voice in
+both ears and takes out mains hum and boom.
 
 Made for the [Nerdative](https://www.youtube.com/@nerdative) channel on YouTube, by the same person as
 [Nerdwave](https://github.com/grumpitect/nerdwave).
@@ -173,9 +174,9 @@ npm run test:real      # the same in your installed Google Chrome, the way a per
 ```
 
 `test:real` starts Google Chrome with a throwaway profile and drives it over its debugging protocol, which can load
-the extension and click its toolbar icon for real. It installs 1.0.0 and updates it over open tabs, reloads it while
-tabs play, opens the dialog, uses the keys and modifier + scroll, runs capture mode under Chrome's real "only after
-you clicked it on this tab" rule, plays a DRM (ClearKey) stream, and visits YouTube, Vimeo, Facebook and Twitch,
+the extension and click its toolbar icon for real. It installs 1.0.0 and 1.2.0 and updates them over open tabs
+(voice_fix included, on a tab 1.2.0 was boosting), reloads it while tabs play, opens the dialog, uses the keys and modifier + scroll, runs capture mode under Chrome's real "only after
+you clicked it on this tab" rule, plays a DRM (ClearKey) stream, and visits YouTube (boosting it, turning voice_fix on, and moving to the next video), Vimeo, Facebook and Twitch,
 failing on anything that shows up under Errors in chrome://extensions. It runs twice: once letting pages play sound
 freely (most tests need that), and once with the browser's normal autoplay rule, to check nothing warns before
 you've clicked a page. Its audio output is off and it runs headless, so it's silent and never shows a window. Set

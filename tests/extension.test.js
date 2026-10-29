@@ -551,11 +551,15 @@ test("the toolbar icon opens a dialog in the page that changes the tab, and clos
     await demo.goto(demoOrigin + "/demo");
     const demoId = await tabIdOf(demoOrigin);
     await send({ type: "setTab", tabId: demoId, percent: 250 });
+    // voice_fix on, as it looks once it has found hum.
+    await send({ type: "setVoice", tabId: demoId, on: true });
+    await sw.evaluate((tabId) => chrome.storage.session.set({ [`hum:${tabId}`]: { 0: "60" } }), demoId);
     await openDialog(demo, demoId);
     await demo.evaluate(() => document.activeElement?.blur());
     await wait(300);
     await demo.screenshot({ path: process.env.SCREENSHOT });
     await send({ type: "setTab", tabId: demoId, percent: 100 });
+    await send({ type: "setVoice", tabId: demoId, on: false });
     await demo.close();
   }
 });
