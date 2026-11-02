@@ -35,12 +35,19 @@
   .backdrop { background: rgba(0, 0, 0, 0.35); }
   .dialog { border-color: #ebe9e3; box-shadow: 0 18px 50px rgba(0, 0, 0, 0.5); }
 }
+/* channel_strip: a strip of warm metal; it slides 4 px into place, like a fader settling. */
+.dialog.cs { border-color: #cfc4b1; border-radius: 6px; box-shadow: 0 24px 60px rgba(40, 30, 15, 0.25); animation: settle-cs 120ms ease-out; }
+@media (prefers-color-scheme: dark) {
+  .dialog.cs { border-color: #3a3026; box-shadow: 0 24px 60px rgba(0, 0, 0, 0.55); }
+}
 .closing .backdrop { animation: fade 90ms ease-in reverse forwards; }
 .closing .dialog { animation: settle 90ms ease-in reverse forwards; }
+.closing .dialog.cs { animation: settle-cs 90ms ease-in reverse forwards; }
 @keyframes fade { from { opacity: 0; } }
 @keyframes settle { from { opacity: 0; transform: translateY(1px); } }
+@keyframes settle-cs { from { opacity: 0; transform: translateY(4px); } }
 @media (prefers-reduced-motion: reduce) {
-  .backdrop, .dialog, .closing .backdrop, .closing .dialog { animation: none; }
+  .backdrop, .dialog, .dialog.cs, .closing .backdrop, .closing .dialog, .closing .dialog.cs { animation: none; }
 }
 `;
 

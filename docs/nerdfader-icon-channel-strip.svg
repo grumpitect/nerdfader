@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="128" height="128" viewBox="0 0 128 128">
+  <!-- Nerdfader's icon (channel_strip, the default theme): one fader in its slot on warm console metal, with a
+       green unity tick. Rendered to extension/icons/cs-*.png and docs/nerdfader-icon.png by Tools/render-icons.mjs. -->
+  <defs>
+    <linearGradient id="metal" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#2a231b"/>
+      <stop offset="1" stop-color="#1a1510"/>
+    </linearGradient>
+  </defs>
+  <rect x="1" y="1" width="126" height="126" rx="28" fill="url(#metal)" stroke="#f3e9d8" stroke-opacity="0.3" stroke-width="1.5"/>
+  <rect x="56" y="22" width="16" height="84" rx="3" fill="#0d0a07"/>
+  <path d="M24 64h8M24 34h5M24 94h5" stroke="#a89a86" stroke-width="2"/>
+  <rect x="80" y="62" width="12" height="4" rx="1" fill="#8be38f"/>
+  <rect x="36" y="38" width="56" height="24" rx="4" fill="#ff8a3d"/>
+  <rect x="36" y="48" width="56" height="4" fill="#5a2a0c"/>
+</svg>

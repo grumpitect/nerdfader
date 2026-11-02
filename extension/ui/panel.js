@@ -9,8 +9,12 @@ globalThis.NerdfaderPanel = (() => {
   const toPercent = (pos) => (pos <= 100 ? pos : 100 + (pos - 100) * 5);
   const toPos = (p) => (p <= 100 ? p : 100 + (p - 100) / 5);
 
-  // The look: a page from a datasheet. Ink on paper with a faint blueprint grid, and a red pen for what's past
-  // 100% and what's on. Light or dark with the system.
+  // Two looks, each light or dark with the system (the user picks one; the background keeps it as settings.theme):
+  // - datasheet: a page from a datasheet. Ink on paper with a faint blueprint grid, a red pen for
+  //   what's past 100% and what's on, the volume as a scale, switches drawn as in a schematic.
+  // - channel_strip (.cs, the default): a channel strip on a mixing desk. Graphite and cream, the volume as a row of LEDs (orange
+  //   to 100%, red past it, a green unity mark between), round toggles whose knob carries a status LED, green when on.
+  // The variables keep their datasheet names (--red is the accent, --blue the "on" color) in both.
   const css = `
 .nf {
   --paper: #f8f7f2;
@@ -117,6 +121,7 @@ globalThis.NerdfaderPanel = (() => {
 .nf .voiceRow { margin-top: 8px; }
 .nf .toggle input { position: absolute; opacity: 0; pointer-events: none; }
 .nf .caret { color: var(--red); visibility: hidden; }
+.nf .caret::before { content: "✓"; }
 .nf .toggle input:checked ~ .caret { visibility: visible; }
 .nf .name { flex: 1; }
 /* A switch as a schematic draws it: two terminals and a blade, open (off) or closed (on). */
@@ -131,7 +136,7 @@ globalThis.NerdfaderPanel = (() => {
   transform-origin: 0 50%; transform: rotate(-26deg); transition: transform 0.12s ease-out, background 0.12s;
 }
 .nf .toggle input:checked ~ .switch::after { transform: rotate(0); background: var(--blue); }
-@media (prefers-reduced-motion: reduce) { .nf .switch::after { transition: none; } }
+@media (prefers-reduced-motion: reduce) { .nf .switch::after, .nf.cs .switch::after, .nf.cs .switch::before { transition: none; } }
 
 .nf .hint { color: var(--muted); font-size: 12px; margin: 4px 0 8px 18px; }
 .nf .infoBtn {
@@ -144,8 +149,9 @@ globalThis.NerdfaderPanel = (() => {
 .nf .info p:has(b) + p:has(b) { margin-top: 2px; }   /* the Off and On lines sit together */
 .nf .info b { color: var(--blue); font-weight: 700; }
 .nf .picks { display: flex; gap: 6px; margin: -2px 0 8px 18px; }
-.nf .pick { min-width: 30px; padding: 2px 6px; color: var(--muted); border-color: var(--faint); }
-.nf .pick.on { color: var(--red); border-color: var(--red); }
+.nf .themes { gap: 6px; margin: 4px 0 2px; }
+.nf .pick, .nf .themePick { min-width: 30px; padding: 2px 6px; color: var(--muted); border-color: var(--faint); }
+.nf .pick.on, .nf .themePick.on { color: var(--red); border-color: var(--red); }
 .nf .picks.off { opacity: 0.4; }
 .nf .setting { display: flex; align-items: center; gap: 8px; padding-left: 18px; }
 .nf .setting .name { flex: 1; }
@@ -167,6 +173,80 @@ globalThis.NerdfaderPanel = (() => {
 .nf footer a:hover { color: var(--blue); }
 
 .nf.unsupported .vol, .nf.unsupported .row, .nf.unsupported .voiceRow { opacity: 0.4; pointer-events: none; }
+
+/* channel_strip */
+.nf.cs {
+  --paper: #f3ede2;
+  --ink: #1e1912;
+  --muted: #6a5d4c;
+  --red: #a84300;
+  --blue: #1d6e35;
+  --peak: #b8241a;
+  --led: #c45a10;
+  --unlit: #e1d8c8;
+  --faint: #cfc4b1;
+  --surface: #e7dfd0;
+  --slot: #d9cfbd;
+  --cap: #fbf8f2;
+  --hi: rgba(255, 255, 255, 0.7);
+  --hover: rgba(30, 25, 18, 0.06);
+  background-image: none;
+}
+@media (prefers-color-scheme: dark) {
+  .nf.cs {
+    --paper: #17130e;
+    --ink: #f3e9d8;
+    --muted: #a89a86;
+    --red: #ff8a3d;
+    --blue: #8be38f;
+    --peak: #ff5d4f;
+    --led: #ff8a3d;
+    --unlit: #2c251c;
+    --faint: #3a3026;
+    --surface: #231d16;
+    --slot: #0d0a07;
+    --cap: #4a3f33;
+    --hi: rgba(255, 255, 255, 0.08);
+    --hover: rgba(255, 255, 255, 0.06);
+  }
+}
+.nf.cs header { border-bottom-color: var(--faint); }
+.nf.cs .brand::before {
+  content: ""; display: inline-block; width: 6px; height: 6px; margin-right: 8px; vertical-align: 2px; border-radius: 1px;
+  background: var(--led); box-shadow: 0 0 6px var(--led);
+}
+.nf.cs .caret::before { content: ">"; }
+.nf.cs button { background: var(--surface); border-color: var(--faint); border-radius: 3px; box-shadow: inset 0 1px 0 var(--hi); }
+.nf.cs button:hover { background: var(--slot); }
+.nf.cs button:disabled { background: transparent; box-shadow: none; }
+.nf.cs button.primary { color: var(--red); border-color: var(--red); }
+.nf.cs .infoBtn { background: transparent; box-shadow: none; border-radius: 50%; }
+.nf.cs .rule { border-top: 1px solid var(--faint); }
+.nf.cs .rule.scan::after { display: none; }
+/* The volume as LEDs (drawScale): orange up to 100%, red past it, a green unity mark labelled 0dB between. */
+.nf.cs .scale .slot { fill: var(--slot); }
+.nf.cs .scale .led { fill: var(--unlit); }
+.nf.cs .scale .led.on { fill: var(--led); }
+.nf.cs .scale .led.on.peak { fill: var(--peak); }
+.nf.cs .scale .unityTick { fill: var(--blue); }
+.nf.cs .scale .dbLabel { fill: var(--blue); font: 7px var(--mono); }
+/* A toggle: a round knob in a pill-shaped slot, left when off and right when on, with a status LED in its middle that
+   travels with it: dim when off, green when on. While voice_fix listens, its LED pulses. */
+.nf.cs .switch { width: 32px; background: var(--slot); border: 1px solid var(--faint); border-radius: 8px; }
+.nf.cs .switch::after {
+  left: 1px; top: 1px; width: 12px; height: 12px; border-radius: 50%; background: var(--cap);
+  box-shadow: inset 0 1px 0 var(--hi), 0 0 0 1px var(--faint), 0 1px 2px rgba(0, 0, 0, 0.35);
+  transform: none; transition: transform 0.14s ease-out;
+}
+.nf.cs .switch::before {
+  content: ""; position: absolute; z-index: 1; left: 4px; top: 4px; width: 6px; height: 6px; border-radius: 50%;
+  background: var(--faint); transition: transform 0.14s ease-out;
+}
+.nf.cs .toggle input:checked ~ .switch::after { background: var(--cap); transform: translateX(16px); }
+.nf.cs .toggle input:checked ~ .switch::before { transform: translateX(16px); background: var(--blue); box-shadow: 0 0 5px var(--blue); }
+.nf.cs.listening .voiceRow .switch::before { animation: nf-led 1.2s ease-in-out infinite alternate; }
+@keyframes nf-led { to { opacity: 0.35; } }
+@media (prefers-reduced-motion: reduce) { .nf.cs.listening .voiceRow .switch::before { animation: none; } }
 `;
 
   const html = `
@@ -197,7 +277,7 @@ globalThis.NerdfaderPanel = (() => {
 </div>
 <label class="toggle voiceRow" title="voice fix (v)">
   <input type="checkbox" class="voiceToggle">
-  <span class="caret">✓</span>
+  <span class="caret"></span>
   <span class="name">voice_fix <button class="infoBtn" data-info="voiceInfo" title="What is voice fix?" aria-label="What is voice fix?">i</button></span>
   <span class="switch" aria-hidden="true"></span>
 </label>
@@ -214,14 +294,14 @@ globalThis.NerdfaderPanel = (() => {
 <div class="rule voiceRule"></div>
 <label class="toggle">
   <input type="checkbox" class="override">
-  <span class="caret">✓</span>
+  <span class="caret"></span>
   <span class="name">all_tabs</span>
   <span class="switch" aria-hidden="true"></span>
 </label>
 <div class="hint overrideHint"></div>
 <label class="toggle">
   <input type="checkbox" class="alwaysToggle">
-  <span class="caret">✓</span>
+  <span class="caret"></span>
   <span class="name">capture_mode <button class="infoBtn" data-info="captureInfo" title="What is capture mode?" aria-label="What is capture mode?">i</button></span>
   <span class="switch" aria-hidden="true"></span>
 </label>
@@ -245,13 +325,17 @@ globalThis.NerdfaderPanel = (() => {
 <div class="hint keysHint"></div>
 <label class="toggle">
   <input type="checkbox" class="altScrollToggle">
-  <span class="caret">✓</span>
+  <span class="caret"></span>
   <span class="name">scroll_volume</span>
   <span class="switch" aria-hidden="true"></span>
 </label>
 <div class="hint altScrollHint"></div>
 <div class="picks">
   <button class="pick kbd" data-key="alt"></button><button class="pick kbd" data-key="ctrl"></button><button class="pick kbd" data-key="shift"></button><button class="pick kbd" data-key="meta"></button>
+</div>
+<div class="setting themes">
+  <span class="name">theme</span>
+  <button class="themePick" data-theme="channel_strip" title="a mixing desk's channel strip">channel_strip</button><button class="themePick" data-theme="datasheet" title="ink on paper">datasheet</button>
 </div>
 <div class="rule"></div>
 <footer>
@@ -323,7 +407,6 @@ globalThis.NerdfaderPanel = (() => {
       if (e.target !== root && !e.target.classList?.contains("slider")) e.preventDefault();
     });
     if (close) $("keys").textContent += " · esc close";
-    $("version").textContent = "NF-1 · rev " + chrome.runtime.getManifest().version;
 
     // A quick read first so the panel shows the right values straight away. In the toolbar popup, opening it is
     // also what lets the browser capture this tab, so a paused capture mode starts again (the dialog's icon click
@@ -380,6 +463,8 @@ globalThis.NerdfaderPanel = (() => {
     }
 
     function render() {
+      const theme = state.settings?.theme === "datasheet" ? "datasheet" : "channel_strip";
+      root.classList.toggle("cs", theme === "channel_strip");
       const all = state.override.on;
       const p = current();
       const boosting = p > DEFAULT;
@@ -429,7 +514,9 @@ globalThis.NerdfaderPanel = (() => {
       if (state.shape?.boom) fixes.push("less boom");
       if (state.hum === "50" || state.hum === "60") fixes.push(`${state.hum} Hz hum removed`);
       const done = !!state.shape && !!state.hum;
-      $("voiceRule").classList.toggle("scan", supported && state.voice && !done && !state.status);
+      const listening = supported && state.voice && !done && !state.status;
+      $("voiceRule").classList.toggle("scan", listening);
+      root.classList.toggle("listening", listening);
       $("voiceHint").textContent = !supported || !state.voice ? "for talks: voice in both ears, less hum and boom"
         : state.status === "click" ? "on · click the page to start"
         : state.status && state.status !== "unknown" ? "on · this site can't be fixed"
@@ -438,6 +525,10 @@ globalThis.NerdfaderPanel = (() => {
         : "on · listening";
 
       const settings = state.settings ?? { shortcut: null, resetShortcut: null, upShortcut: null, downShortcut: null, altScroll: true, scrollKeys: ["shift", "meta"] };
+      const version = chrome.runtime.getManifest().version;
+      $("version").textContent = theme === "datasheet" ? `NF-1 · rev ${version}` : `v${version}`;
+      for (const b of root.querySelectorAll(".themePick")) b.classList.toggle("on", b.dataset.theme === theme);
+      if (!close) document.body.style.background = getComputedStyle(root).backgroundColor;   // the popup's edges
       for (const b of root.querySelectorAll(".shortcutBtn")) {
         const which = b.dataset.setting, value = settings[which];
         b.textContent = recording === which ? "press keys…" : shortcutLabel(value);
@@ -511,6 +602,7 @@ globalThis.NerdfaderPanel = (() => {
       setVoice(e.target.checked);
       root.focus();
     });
+    for (const b of root.querySelectorAll(".themePick")) b.addEventListener("click", () => saveSettings({ theme: b.dataset.theme }));
     for (const b of root.querySelectorAll(".pick")) {
       // Each one switches on and off; the last one on stays on.
       b.addEventListener("click", () => {
@@ -616,6 +708,7 @@ globalThis.NerdfaderPanel = (() => {
     function drawScale() {
       const bar = $("bar"), svg = $("scale");
       const room = Math.floor(bar.getBoundingClientRect().width);
+      if (root.classList.contains("cs")) return drawLeds(svg, room);
       const step = Math.floor((room - 10) / 20);
       if (step <= 0) return;
       const x0 = 5.5, width = step * 20 + 11, at = (pos) => x0 + (pos / 10) * step, y = 18.5;
@@ -633,6 +726,23 @@ globalThis.NerdfaderPanel = (() => {
         `<line class="unity" x1="${unity}" x2="${unity}" y1="10" y2="27"/>` +
         `<text class="unityLabel" x="${unity}" y="32" text-anchor="middle">1.0</text>` +
         `<polygon class="wedge${pos > 100 ? " past" : ""}" points="${x - 5},4 ${x + 5},4 ${x},12"/>`;
+    }
+    // channel_strip's volume: 20 LEDs a whole number of pixels wide, 2 px apart, in a dark slot, with 8 px at 100% for
+    // a green unity mark labelled 0dB. Lit up to the volume: orange to 100%, red past it.
+    function drawLeds(svg, room) {
+      const step = Math.floor((room - 12) / 20);
+      if (step < 4) return;
+      const x0 = 3, width = 20 * step - 2 + 6 + 2 * x0, pos = toPos(current()), unity = x0 + 10 * step;
+      svg.setAttribute("width", width);
+      svg.style.left = `${Math.floor((room - width) / 2)}px`;
+      let leds = "";
+      for (let k = 0; k < 20; k++) {
+        const x = x0 + k * step + (k >= 10 ? 6 : 0);
+        leds += `<rect class="led${pos > k * 10 ? " on" : ""}${k >= 10 ? " peak" : ""}" x="${x}" y="11" width="${step - 2}" height="14"/>`;
+      }
+      svg.innerHTML = `<rect class="slot" x="0" y="8" width="${width}" height="20" rx="2"/>${leds}` +
+        `<rect class="unityTick" x="${unity}" y="9" width="2" height="18"/>` +
+        `<text class="dbLabel" x="${unity + 1}" y="6" text-anchor="middle">0dB</text>`;
     }
     new ResizeObserver(drawScale).observe(root);
 

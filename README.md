@@ -15,8 +15,11 @@ Made for the [Nerdative](https://www.youtube.com/@nerdative) channel on YouTube,
 [Nerdwave](https://github.com/grumpitect/nerdwave).
 
 <p align="center"><picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/dialog-channel-strip.png">
+  <img src="docs/dialog-channel-strip-light.png" width="400" alt="Nerdfader's dialog over a page, in the channel_strip theme">
+</picture> <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/dialog-dark.png">
-  <img src="docs/dialog.png" width="660" alt="Nerdfader's dialog over a page">
+  <img src="docs/dialog.png" width="400" alt="The same dialog in the datasheet theme">
 </picture></p>
 
 ## Features
@@ -53,7 +56,10 @@ and always within 6 seconds. It's per tab, stays on while the tab stays on the s
 - **all_tabs.** Turn it on and one slider sets every tab, including ones you open later. Turn it off and every
   tab goes back to the volume it had before.
 - **Badge.** The toolbar icon shows the tab's volume when it isn't 100%, and **fix** at 100% with voice_fix on.
-- **Light and dark.** The dialog and popup follow the system's appearance: ink on paper, or light lines on dark.
+- **Two themes, light and dark.** **channel_strip** (the default) is a mixing desk's channel strip: warm metal, the
+  volume as a row of LEDs, slide switches that show a green light when on. **datasheet** draws Nerdfader like a page
+  from a datasheet: ink on paper, the volume as a scale, switches as in a circuit diagram. Pick one under **theme**
+  in the dialog; the toolbar icon and badge change with it. Each follows the system's light or dark appearance.
 - **Keys.** On any page (Ctrl instead of ⌘ on Windows and Linux):
 
   | Keys | Does |
@@ -221,9 +227,10 @@ To try a change, load the `extension` folder with **Load unpacked** and click th
 - `extension/ui/panel.js`: the panel (slider, reset, switches, capture offer), shared by the dialog and the popup.
 - `extension/ui/overlay.js`: the in-page dialog.
 - `extension/popup/`: the toolbar popup, for pages the dialog can't open in.
-- `docs/nerdfader-icon.svg`: the icon. `node Tools/render-icons.mjs` renders `extension/icons/` from it (with a
-  pixel-aligned drawing for 16 px) and the README version, `docs/nerdfader-icon.png`.
-- `SCREENSHOT=docs/dialog.png npm test` re-renders the README screenshots (light, and `docs/dialog-dark.png`).
+- `docs/nerdfader-icon-channel-strip.svg`: the icon (channel_strip's, the default), and `docs/nerdfader-icon.svg`
+  datasheet's. `node Tools/render-icons.mjs` renders `extension/icons/` from them (with simpler drawings for the
+  small sizes) and the README version of the default, `docs/nerdfader-icon.png`.
+- `SCREENSHOT=docs/dialog.png npm test` re-renders the README screenshots (both themes, light and dark).
 
 Maintainers publish a release with `./release.sh` (patch bump by default; `minor`, `major` or an exact `X.Y.Z`
 also work). It runs the tests (all three suites), bumps the version in `manifest.json`, zips the extension, tags,

@@ -1,5 +1,5 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="128" height="128" viewBox="0 0 128 128">
-  <!-- Nerdfader's icon: a potentiometer as a schematic draws it (a resistor with an arrow through it), in ink and a
+  <!-- Nerdfader's datasheet icon: a potentiometer as a schematic draws it (a resistor with an arrow through it), in ink and a
        red pen on datasheet paper. extension/icons/ are rendered from this (and a pixel-aligned 16 px version) by
        Tools/render-icons.mjs. -->
   <defs>

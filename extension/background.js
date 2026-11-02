@@ -59,7 +59,7 @@ async function settings() {
   await upgradeKeys();
   const mac = (await chrome.runtime.getPlatformInfo()).os === "mac";
   const keys = (code) => ({ code, shift: true, meta: mac, ctrl: !mac, alt: false });
-  const stored = await chrome.storage.local.get([...Object.keys(SHORTCUTS), "altScroll", "scrollKeys", "scrollKey", "browser"]);
+  const stored = await chrome.storage.local.get([...Object.keys(SHORTCUTS), "altScroll", "scrollKeys", "scrollKey", "browser", "theme"]);
   // Until a page has told which browser this is, the defaults are the wanted ones.
   const taken = TAKEN_BY_BROWSER[stored.browser] ?? [];
   let number = mac ? 0 : 1;
@@ -68,7 +68,7 @@ async function settings() {
   // The keys to hold while scrolling: any combination of "alt", "ctrl", "shift" and "meta", at least one. (Versions
   // before 1.2 kept a single key as scrollKey.)
   const scrollKeys = stored.scrollKeys ?? (stored.scrollKey ? [stored.scrollKey] : ["shift", "meta"]);
-  const result = { altScroll: stored.altScroll ?? true, scrollKeys };
+  const result = { altScroll: stored.altScroll ?? true, scrollKeys, theme: Object.hasOwn(THEMES, stored.theme ?? "") ? stored.theme : "channel_strip" };
   for (const name of Object.keys(SHORTCUTS)) result[name] = stored[name] === undefined ? defaults[name] : stored[name];
   return result;
 }
@@ -343,10 +343,11 @@ const handlers = {
     const now = await settings();
     for (const tab of await chrome.tabs.query({})) chrome.tabs.sendMessage(tab.id, { type: "settings", settings: now }).catch(() => {});
   },
-  // From the panel: the shortcuts (each null for none), whether modifier + scroll changes the volume, and which
-  // modifiers to hold for it (scrollKeys: any of "alt", "ctrl", "shift", "meta", at least one).
+  // From the panel: the shortcuts (each null for none), whether modifier + scroll changes the volume, which
+  // modifiers to hold for it (scrollKeys: any of "alt", "ctrl", "shift", "meta", at least one), and the theme.
   async setSettings(msg) {
     const change = {};
+    if (Object.hasOwn(THEMES, msg.theme ?? "")) change.theme = msg.theme;
     for (const name of Object.keys(SHORTCUTS)) if (msg[name] !== undefined) change[name] = msg[name];
     if (typeof msg.altScroll === "boolean") change.altScroll = msg.altScroll;
     if (Array.isArray(msg.scrollKeys)) {
@@ -354,6 +355,7 @@ const handlers = {
       if (keys.length) change.scrollKeys = keys;   // at least one stays on
     }
     await chrome.storage.local.set(change);
+    if (change.theme) themeLook();
     const next = await settings();
     for (const tab of await chrome.tabs.query({})) chrome.tabs.sendMessage(tab.id, { type: "settings", settings: next }).catch(() => {});
     return state(msg.tabId);
@@ -496,9 +498,18 @@ function reloadIfFilesChanged() {
 }
 chrome.tabs.onActivated.addListener(() => reloadIfFilesChanged());
 
-function badgeColors() {
-  chrome.action.setBadgeBackgroundColor({ color: "#c21f35" });   // the redline: white on it is 5.9:1
-  chrome.action.setBadgeTextColor?.({ color: "#ffffff" });
+// The two looks (ui/panel.js has their styles): the toolbar icon and badge colors of each. channel_strip, the
+// default, is the manifest's own icon. Badge text against its color: white on the redline 5.9:1, dark on the signal orange 7.9:1.
+const THEMES = {
+  datasheet: { icon: "icons/icon", badge: "#c21f35", text: "#ffffff" },
+  channel_strip: { icon: "icons/cs", badge: "#ff8a3d", text: "#17130e" },
+};
+async function themeLook() {
+  const { theme } = await chrome.storage.local.get("theme");
+  const look = Object.hasOwn(THEMES, theme ?? "") ? THEMES[theme] : THEMES.channel_strip;
+  chrome.action.setBadgeBackgroundColor({ color: look.badge });
+  chrome.action.setBadgeTextColor?.({ color: look.text });
+  chrome.action.setIcon({ path: { 16: `${look.icon}-16.png`, 32: `${look.icon}-32.png` } }).catch(() => {});
 }
 
 // Content scripts only start in pages loaded after the extension, so add them to the tabs already open. Safe to run
@@ -520,8 +531,8 @@ async function attachToOpenTabs() {
 }
 
 chrome.runtime.onInstalled.addListener(async (details) => {
-  badgeColors();
+  themeLook();
   noteLoad({ installed: details.reason });
 });
 
-chrome.runtime.onStartup.addListener(badgeColors);
+chrome.runtime.onStartup.addListener(themeLook);
