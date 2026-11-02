@@ -9,24 +9,40 @@ globalThis.NerdfaderPanel = (() => {
   const toPercent = (pos) => (pos <= 100 ? pos : 100 + (pos - 100) * 5);
   const toPos = (p) => (p <= 100 ? p : 100 + (p - 100) / 5);
 
+  // The look: a page from a datasheet. Ink on paper with a faint blueprint grid, and a red pen for what's past
+  // 100% and what's on. Light or dark with the system.
   const css = `
 .nf {
-  --bg: #170c2c;
-  --edge: #3a2366;
-  --text: #e9e3ff;
-  --muted: #8f84b0;
-  --pink: #ff4fa8;
-  --cyan: #5ee6ff;
-  --amber: #ffc857;
-  --off: #3b2c5c;
+  --paper: #f8f7f2;
+  --ink: #15171b;
+  --muted: #5f5e58;
+  --red: #c21f35;
+  --blue: #1f55c9;
+  --faint: #c9c7bf;
+  --grid: rgba(31, 85, 201, 0.06);
+  --hover: rgba(21, 23, 27, 0.06);
   --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
   width: 320px;
   padding: 14px 16px 12px;
-  background: var(--bg);
-  color: var(--text);
+  background-color: var(--paper);
+  background-image: linear-gradient(var(--grid) 1px, transparent 1px), linear-gradient(90deg, var(--grid) 1px, transparent 1px);
+  background-size: 12px 12px;
+  color: var(--ink);
   font: 13px/1.4 var(--mono);
   text-align: left;
   user-select: none;
+}
+@media (prefers-color-scheme: dark) {
+  .nf {
+    --paper: #111317;
+    --ink: #ebe9e3;
+    --muted: #9b9990;
+    --red: #ff6f7d;
+    --blue: #82aaff;
+    --faint: #3a3d44;
+    --grid: rgba(130, 170, 255, 0.06);
+    --hover: rgba(235, 233, 227, 0.08);
+  }
 }
 .nf * { box-sizing: border-box; }
 /* Nothing in the panel takes keyboard focus or shows a focus ring: the panel itself holds focus and handles keys. */
@@ -34,96 +50,102 @@ globalThis.NerdfaderPanel = (() => {
 .nf ::-moz-focus-inner { border: 0; }
 .nf p { margin: 0; }
 
-.nf header { display: flex; justify-content: space-between; align-items: baseline; }
-.nf .brand { color: var(--pink); font-weight: 700; font-size: 15px; text-decoration: none; }
-.nf .version { color: var(--muted); text-decoration: none; }
+.nf header { display: flex; justify-content: space-between; align-items: baseline; padding-bottom: 6px; border-bottom: 1px solid var(--ink); }
+.nf .brand { color: var(--ink); font-weight: 700; font-size: 15px; text-decoration: none; }
+.nf .version { color: var(--muted); font-size: 11px; text-decoration: none; }
 .nf .brand:hover, .nf .version:hover { text-decoration: underline; }
 
 .nf .target {
   margin: 10px 0 8px;
-  color: var(--cyan);
+  color: var(--ink);
   font-weight: 700;
   text-align: center;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
-.nf .target.all { color: var(--pink); }
+.nf .target.all { color: var(--red); }
 
 .nf .vol { display: flex; align-items: center; gap: 8px; }
 .nf .label { color: var(--muted); }
-.nf .percent { width: 4ch; text-align: right; font-weight: 700; }
+.nf .percent { width: 4ch; text-align: right; font-weight: 700; font-variant-numeric: tabular-nums; }
 
-.nf .bar { position: relative; flex: 1; display: flex; align-items: center; justify-content: center; gap: 4px; color: var(--muted); }
-.nf .segments {
-  flex: 1; display: grid; gap: 2px; height: 16px; justify-content: center;
-  grid-template-columns: repeat(10, var(--seg, 1fr)) 1px repeat(10, var(--seg, 1fr));
-}
-.nf .segments i { border-radius: 2px; background: var(--off); }
-.nf .segments i.on { background: var(--amber); }
-.nf .segments i.boost.on { background: var(--pink); }
-/* An empty column between the 10th and 11th segments marks 100%. Segments get a whole number of pixels (--seg, set
-   from the space available) so the browser draws them all the same width instead of rounding some down. */
+/* The volume as a scale: a baseline with 21 ticks (taller every fifth), an ink line up to the level and on in red
+   past 100% (marked "1.0"), and a wedge riding on it. Drawn in whole pixels for the space the bar has (drawScale). */
+.nf .bar { position: relative; flex: 1; min-width: 0; height: 32px; }
+.nf .scale { position: absolute; top: 0; height: 32px; overflow: visible; }   /* out of the flow: the bar's width decides */
+.nf .scale .base, .nf .scale .tick { stroke: var(--ink); stroke-width: 1; }
+.nf .scale .level { stroke: var(--ink); stroke-width: 3; }
+.nf .scale .over { stroke: var(--red); stroke-width: 3; }
+.nf .scale .unity { stroke: var(--blue); stroke-width: 1.5; }
+.nf .scale .unityLabel { fill: var(--blue); font: 7px var(--mono); }
+.nf .scale .wedge { fill: var(--ink); }
+.nf .scale .wedge.past { fill: var(--red); }
 
-/* The real slider sits invisibly on top of the segments: mouse, keyboard and screen readers all use it. */
-.nf .slider { position: absolute; inset: -6px 0; width: 100%; height: calc(100% + 12px); margin: 0; opacity: 0; cursor: pointer; }
+/* The real slider sits invisibly on top of the scale: mouse, keyboard and screen readers all use it. */
+.nf .slider { position: absolute; inset: 0; width: 100%; height: 100%; margin: 0; opacity: 0; cursor: pointer; }
 
 .nf .row { display: flex; justify-content: space-between; align-items: center; margin-top: 8px; min-height: 26px; }
 .nf .note { color: var(--muted); font-size: 12px; }
-.nf .note.capture { color: var(--cyan); }
+.nf .note.capture { color: var(--blue); }
 
 .nf button {
   font: inherit;
-  color: var(--cyan);
+  color: var(--ink);
   background: transparent;
-  border: 1px solid var(--cyan);
-  border-radius: 6px;
+  border: 1px solid var(--ink);
+  border-radius: 0;
   padding: 2px 10px;
   cursor: pointer;
 }
-.nf button:hover { background: rgba(94, 230, 255, 0.12); }
-.nf button:disabled { color: var(--off); border-color: var(--off); background: transparent; cursor: default; }
-.nf button.primary { color: var(--pink); border-color: var(--pink); }
-.nf button.primary:hover { background: rgba(255, 79, 168, 0.12); }
+.nf button:hover { background: var(--hover); }
+.nf button:disabled { color: var(--faint); border-color: var(--faint); background: transparent; cursor: default; }
+.nf button.primary { color: var(--red); border-color: var(--red); }
 
-.nf .rule { margin: 10px 0; border-top: 1px dashed var(--edge); position: relative; }
-/* While voice_fix listens, a short line of light runs along the rule under it. */
+.nf .rule { margin: 10px 0; border-top: 1px dashed var(--muted); position: relative; }
+/* While voice_fix listens, a short sine trace runs along the rule under it, like an oscilloscope. */
 .nf .rule.scan::after {
-  content: ""; position: absolute; top: -1px; left: 0; width: 60px; height: 1px;
-  background: linear-gradient(90deg, transparent, var(--cyan), transparent);
-  animation: nf-scan 1.6s ease-in-out infinite alternate;
+  content: ""; position: absolute; top: -5px; left: 0; width: 44px; height: 9px; background: var(--blue);
+  -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='44' height='9'%3E%3Cpath d='M0 4.5q5.5-7 11 0t11 0 11 0 11 0' fill='none' stroke='black' stroke-width='1.5'/%3E%3C/svg%3E");
+  mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='44' height='9'%3E%3Cpath d='M0 4.5q5.5-7 11 0t11 0 11 0 11 0' fill='none' stroke='black' stroke-width='1.5'/%3E%3C/svg%3E");
+  animation: nf-trace 1.4s linear infinite;
 }
-@keyframes nf-scan { from { left: 0; } to { left: calc(100% - 60px); } }
-@media (prefers-reduced-motion: reduce) { .nf .rule.scan::after { animation: none; left: calc(50% - 30px); } }
+@keyframes nf-trace { from { left: 0; } to { left: calc(100% - 44px); } }
+@media (prefers-reduced-motion: reduce) { .nf .rule.scan::after { animation: none; left: calc(50% - 22px); } }
 
 .nf .toggle { display: flex; align-items: center; gap: 8px; cursor: pointer; }
 .nf .voiceRow { margin-top: 8px; }
 .nf .toggle input { position: absolute; opacity: 0; pointer-events: none; }
-.nf .caret { color: var(--pink); visibility: hidden; }
+.nf .caret { color: var(--red); visibility: hidden; }
 .nf .toggle input:checked ~ .caret { visibility: visible; }
-.nf .toggle input:checked ~ .name { color: var(--pink); }
 .nf .name { flex: 1; }
-.nf .switch { width: 30px; height: 16px; border-radius: 8px; background: var(--off); position: relative; transition: background 0.15s; }
-.nf .switch::after {
-  content: ""; position: absolute; top: 2px; left: 2px; width: 12px; height: 12px; border-radius: 50%;
-  background: var(--text); transition: transform 0.15s;
+/* A switch as a schematic draws it: two terminals and a blade, open (off) or closed (on). */
+.nf .switch {
+  width: 30px; height: 16px; position: relative;
+  background:
+    radial-gradient(circle at 4px 11px, var(--ink) 2.4px, transparent 2.9px),
+    radial-gradient(circle at 26px 11px, var(--ink) 2.4px, transparent 2.9px);
 }
-.nf .toggle input:checked ~ .switch { background: var(--pink); }
-.nf .toggle input:checked ~ .switch::after { transform: translateX(14px); }
+.nf .switch::after {
+  content: ""; position: absolute; left: 4px; top: 10.25px; width: 22px; height: 1.5px; background: var(--muted);
+  transform-origin: 0 50%; transform: rotate(-26deg); transition: transform 0.12s ease-out, background 0.12s;
+}
+.nf .toggle input:checked ~ .switch::after { transform: rotate(0); background: var(--blue); }
+@media (prefers-reduced-motion: reduce) { .nf .switch::after { transition: none; } }
 
 .nf .hint { color: var(--muted); font-size: 12px; margin: 4px 0 8px 18px; }
 .nf .infoBtn {
-  font: italic 700 10px/1 Georgia, serif; width: 15px; height: 15px; padding: 0; margin-left: 6px; border-radius: 50%;
+  font: 700 10px/1 var(--mono); width: 15px; height: 15px; padding: 0; margin-left: 6px; border-radius: 50%;
   vertical-align: 1px; color: var(--muted); border-color: var(--muted);
 }
-.nf .infoBtn.open, .nf .infoBtn:hover { color: var(--cyan); border-color: var(--cyan); }
-.nf .info { margin: 2px 0 8px 18px; padding: 8px 10px; border-left: 2px solid var(--cyan); font-size: 12px; color: var(--text); }
+.nf .infoBtn.open, .nf .infoBtn:hover { color: var(--blue); border-color: var(--blue); background: transparent; }
+.nf .info { margin: 2px 0 8px 18px; padding: 8px 10px; border-left: 2px solid var(--blue); font-size: 12px; color: var(--ink); }
 .nf .info p + p { margin-top: 6px; }
 .nf .info p:has(b) + p:has(b) { margin-top: 2px; }   /* the Off and On lines sit together */
-.nf .info b { color: var(--cyan); font-weight: 700; }
+.nf .info b { color: var(--blue); font-weight: 700; }
 .nf .picks { display: flex; gap: 6px; margin: -2px 0 8px 18px; }
-.nf .pick { min-width: 30px; padding: 2px 6px; color: var(--muted); border-color: var(--off); }
-.nf .pick.on { color: var(--pink); border-color: var(--pink); }
+.nf .pick { min-width: 30px; padding: 2px 6px; color: var(--muted); border-color: var(--faint); }
+.nf .pick.on { color: var(--red); border-color: var(--red); }
 .nf .picks.off { opacity: 0.4; }
 .nf .setting { display: flex; align-items: center; gap: 8px; padding-left: 18px; }
 .nf .setting .name { flex: 1; }
@@ -133,16 +155,16 @@ globalThis.NerdfaderPanel = (() => {
 .nf .shortcutBtn { min-width: 0; padding: 2px 6px; justify-self: stretch; text-align: center; white-space: nowrap; }   /* all four the same width */
 /* Modifier symbols (⌘⌥⇧⌃) in the system font: the monospace font has no proper ⇧ and borrows a mismatched one. */
 .nf .kbd { font-family: -apple-system, BlinkMacSystemFont, system-ui, "Segoe UI", sans-serif; font-weight: 600; letter-spacing: 0.06em; }
-.nf .shortcutBtn.recording { color: var(--pink); border-color: var(--pink); }
+.nf .shortcutBtn.recording { color: var(--red); border-color: var(--red); }
 
-.nf .offer { margin-top: 10px; padding: 10px; border: 1px dashed var(--pink); border-radius: 8px; font-size: 12px; }
+.nf .offer { margin-top: 10px; padding: 10px; border: 1px dashed var(--red); font-size: 12px; }
 .nf [hidden] { display: none !important; }
 .nf .offer .buttons { display: flex; gap: 8px; margin: 8px 0; }
 .nf .offer .hint { margin: 0; }
 
 .nf footer { display: flex; justify-content: space-between; color: var(--muted); font-size: 11px; }
 .nf footer a { color: var(--muted); text-decoration: none; }
-.nf footer a:hover { color: var(--cyan); }
+.nf footer a:hover { color: var(--blue); }
 
 .nf.unsupported .vol, .nf.unsupported .row, .nf.unsupported .voiceRow { opacity: 0.4; pointer-events: none; }
 `;
@@ -156,9 +178,7 @@ globalThis.NerdfaderPanel = (() => {
 <div class="vol">
   <span class="label">vol</span>
   <div class="bar">
-    <span class="bracket">[</span>
-    <div class="segments">${Array.from({ length: 20 }, (_, i) => `${i === 10 ? "<span></span>" : ""}<i class="${i >= 10 ? "boost" : ""}"></i>`).join("")}</div>
-    <span class="bracket">]</span>
+    <svg class="scale" aria-hidden="true"></svg>
     <input type="range" class="slider" min="0" max="200" step="1" aria-label="Volume">
   </div>
   <span class="percent"></span>
@@ -177,31 +197,31 @@ globalThis.NerdfaderPanel = (() => {
 </div>
 <label class="toggle voiceRow" title="voice fix (v)">
   <input type="checkbox" class="voiceToggle">
-  <span class="caret">&gt;</span>
+  <span class="caret">✓</span>
   <span class="name">voice_fix <button class="infoBtn" data-info="voiceInfo" title="What is voice fix?" aria-label="What is voice fix?">i</button></span>
   <span class="switch" aria-hidden="true"></span>
 </label>
 <div class="hint voiceHint"></div>
 <div class="info voiceInfo" hidden>
-  <p>Fixes badly recorded talks: a voice in one ear, mains hum, a boomy low end. It listens first and fixes only what
-  it finds, so a talk that's fine plays as it is.</p>
+  <p>Fixes badly recorded talks: a voice in one ear, an echo from a second mic further back, mains hum, a boomy low
+  end. It listens first and fixes only what it finds, so a talk that's fine plays as it is.</p>
   <p><b>Off:</b> the tab plays as sent.</p>
   <p><b>On:</b> for this tab. Turn it off for music: it may lose its stereo.</p>
-  <p>When it finds hum on YouTube, it also turns off Stable Volume in that tab while it's on: that setting lifts the
-  quiet moments, and the hum with them.</p>
+  <p>When it finds hum or an echo on YouTube, it also turns off Stable Volume in that tab while it's on: that
+  setting lifts the quiet moments, and the hum or room noise with them.</p>
   <p>Once on, the page's sound goes through Nerdfader until you reload the page.</p>
 </div>
 <div class="rule voiceRule"></div>
 <label class="toggle">
   <input type="checkbox" class="override">
-  <span class="caret">&gt;</span>
+  <span class="caret">✓</span>
   <span class="name">all_tabs</span>
   <span class="switch" aria-hidden="true"></span>
 </label>
 <div class="hint overrideHint"></div>
 <label class="toggle">
   <input type="checkbox" class="alwaysToggle">
-  <span class="caret">&gt;</span>
+  <span class="caret">✓</span>
   <span class="name">capture_mode <button class="infoBtn" data-info="captureInfo" title="What is capture mode?" aria-label="What is capture mode?">i</button></span>
   <span class="switch" aria-hidden="true"></span>
 </label>
@@ -225,7 +245,7 @@ globalThis.NerdfaderPanel = (() => {
 <div class="hint keysHint"></div>
 <label class="toggle">
   <input type="checkbox" class="altScrollToggle">
-  <span class="caret">&gt;</span>
+  <span class="caret">✓</span>
   <span class="name">scroll_volume</span>
   <span class="switch" aria-hidden="true"></span>
 </label>
@@ -303,7 +323,7 @@ globalThis.NerdfaderPanel = (() => {
       if (e.target !== root && !e.target.classList?.contains("slider")) e.preventDefault();
     });
     if (close) $("keys").textContent += " · esc close";
-    $("version").textContent = "v" + chrome.runtime.getManifest().version;
+    $("version").textContent = "NF-1 · rev " + chrome.runtime.getManifest().version;
 
     // A quick read first so the panel shows the right values straight away. In the toolbar popup, opening it is
     // also what lets the browser capture this tab, so a paused capture mode starts again (the dialog's icon click
@@ -373,7 +393,7 @@ globalThis.NerdfaderPanel = (() => {
       $("slider").value = toPos(p);
       $("slider").setAttribute("aria-valuetext", `${p}%`);
       $("percent").textContent = `${p}%`;
-      [...$("segments").querySelectorAll("i")].forEach((seg, i) => seg.classList.toggle("on", toPos(p) > i * 10));
+      drawScale();
       $("reset").disabled = p === DEFAULT;
 
       // What this tab is doing right now.
@@ -402,9 +422,10 @@ globalThis.NerdfaderPanel = (() => {
 
       $("voiceToggle").checked = supported && state.voice;
       // What it fixes, as it finds out: "on · listening", then for example "on · both ears, less boom, 60 Hz hum
-      // removed", or "on · nothing to fix" for a talk that is fine as it is.
+      // removed" (or "both ears, echo removed, ..."), or "on · nothing to fix" for a talk that is fine as it is.
       const fixes = [];
       if (state.shape?.mono) fixes.push("both ears");
+      if (state.shape?.echo) fixes.push("echo removed");
       if (state.shape?.boom) fixes.push("less boom");
       if (state.hum === "50" || state.hum === "60") fixes.push(`${state.hum} Hz hum removed`);
       const done = !!state.shape && !!state.hum;
@@ -590,19 +611,30 @@ globalThis.NerdfaderPanel = (() => {
     // Only the popup listens itself; see above.
     if (!close) root.addEventListener("wheel", wheel, { passive: false });
 
-    // Whole-pixel segments: 20 of them, 20 gaps of 2 px and the 1 px 100% marker in the space the bar has.
-    // The bar then shrinks to exactly fit them, so the brackets hug the segments and any spare pixels go outside.
-    const fitSegments = () => {
-      const segs = $("segments");
-      for (const p of ["--seg", "width", "flex"]) segs.style.removeProperty(p);
-      const width = Math.floor((segs.getBoundingClientRect().width - 41) / 20);
-      if (width <= 0) return;
-      segs.style.setProperty("--seg", `${width}px`);
-      segs.style.setProperty("width", `${width * 20 + 41}px`);
-      segs.style.setProperty("flex", "none");
-    };
-    fitSegments();
-    new ResizeObserver(fitSegments).observe(root);
+    // The scale, in whole pixels for the space the bar has: 20 equal steps (ten up to 100%, ten from 100 to 600%), so
+    // every tick lands on a pixel and the lines stay sharp. Centred, with any spare pixels on either side.
+    function drawScale() {
+      const bar = $("bar"), svg = $("scale");
+      const room = Math.floor(bar.getBoundingClientRect().width);
+      const step = Math.floor((room - 10) / 20);
+      if (step <= 0) return;
+      const x0 = 5.5, width = step * 20 + 11, at = (pos) => x0 + (pos / 10) * step, y = 18.5;
+      svg.setAttribute("width", width);
+      svg.style.left = `${Math.floor((room - width) / 2)}px`;
+      const pos = toPos(current()), unity = at(100), x = at(pos);
+      let ticks = "";
+      for (let k = 0; k <= 20; k++) {
+        const tx = x0 + k * step, major = k % 5 === 0;
+        ticks += `<line class="tick" x1="${tx}" x2="${tx}" y1="${major ? 12 : 15}" y2="${major ? 25 : 22}"/>`;
+      }
+      svg.innerHTML = `<line class="base" x1="${x0}" x2="${at(200)}" y1="${y}" y2="${y}"/>${ticks}` +
+        `<line class="level" x1="${x0}" x2="${Math.min(x, unity)}" y1="${y}" y2="${y}"/>` +
+        (pos > 100 ? `<line class="over" x1="${unity}" x2="${x}" y1="${y}" y2="${y}"/>` : "") +
+        `<line class="unity" x1="${unity}" x2="${unity}" y1="10" y2="27"/>` +
+        `<text class="unityLabel" x="${unity}" y="32" text-anchor="middle">1.0</text>` +
+        `<polygon class="wedge${pos > 100 ? " past" : ""}" points="${x - 5},4 ${x + 5},4 ${x},12"/>`;
+    }
+    new ResizeObserver(drawScale).observe(root);
 
     render();
     root.focus();

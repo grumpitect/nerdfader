@@ -78,7 +78,7 @@ const key = {
   blocked: (id) => `blocked:${id}`,   // { frameId: why that frame can't boost }
   capture: (id) => `capture:${id}`,   // { state: off | on | idle | paused, once: allowed for this tab }
   voice: (id) => `voice:${id}`,       // { site, stableTheirs } while voice fix is on for the tab
-  hum: (id) => `hum:${id}`,           // { frameId: what voice fix found there, as text: { hum, mono, boom } }
+  hum: (id) => `hum:${id}`,           // { frameId: what voice fix found there, as text: { hum, mono, echo, boom } }
 };
 const tabKeys = (id) => Object.values(key).map((k) => k(id));
 const get = async (area, k, fallback) => (await chrome.storage[area].get(k))[k] ?? fallback;
@@ -107,7 +107,7 @@ async function tabInfo(tabId) {
   try { found = JSON.parse(raw); } catch {}
   if (typeof found !== "object" || !found) found = { hum: String(raw) };
   const hum = found.hum ?? "";
-  const shape = typeof found.mono === "boolean" ? { mono: found.mono, boom: !!found.boom } : null;
+  const shape = typeof found.mono === "boolean" ? { mono: found.mono, echo: !!found.echo, boom: !!found.boom } : null;
   return {
     own, override: o, percent, status, capture, captureAlways, allowed, voice: !!voice, hum, shape,
     stableTheirs: !!voice?.stableTheirs,
@@ -497,7 +497,7 @@ function reloadIfFilesChanged() {
 chrome.tabs.onActivated.addListener(() => reloadIfFilesChanged());
 
 function badgeColors() {
-  chrome.action.setBadgeBackgroundColor({ color: "#ff3fa4" });
+  chrome.action.setBadgeBackgroundColor({ color: "#c21f35" });   // the redline: white on it is 5.9:1
   chrome.action.setBadgeTextColor?.({ color: "#ffffff" });
 }
 

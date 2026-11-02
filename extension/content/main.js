@@ -33,7 +33,7 @@
   const connect = AudioNode.prototype.connect;
   const disconnect = AudioNode.prototype.disconnect;
 
-  // What voice fix found and fixes. shape: shapeJudge()'s { mono, mixDb, boom }, null until it knows. lock: the hum
+  // What voice fix found and fixes. shape: shapeJudge()'s { mono, lag, mixDb, boom }, null until it knows. lock: the hum
   // notched now (50, 60 or null), at pitch. result: the hum reported ("" until there is an answer, then "50", "60"
   // or "none"). due: a listen is wanted (at first, and when a new video has played a while).
   const hum = previous?.hum ?? { shape: null, lock: null, pitch: null, result: "", due: true };
@@ -112,6 +112,9 @@
   // The boost stage for elements, created the first time something needs boosting.
   let boostCtx = previous?.boostCtx ?? null, needsClick = false;
   let boostStage = previous?.boostStage ? outputStage(boostCtx, previous.boostStage.input) : null;
+  // The loudness Stable Volume gave, made up while voice fix has it off (stableVolume()): for the elements only.
+  let makeupDb = previous?.stable?.makeup ?? 0;
+  boostStage?.setMakeup(makeupDb);
   // Browsers only let a page start Web Audio after a real interaction with it (a click, a normal key press; holding
   // Command or Shift, or Esc, doesn't count), unless the page may already play sound by itself. Starting it earlier
   // only gets a "not allowed to start" warning, so the boost stage waits for that.
@@ -139,6 +142,7 @@
     boostCtx = new NativeAudioContext({ sampleRate: 48000 });
     boostStage = outputStage(boostCtx);
     boostStage.set(Math.max(level, 1), false);
+    boostStage.setMakeup(makeupDb);
     // Routing an element into a context that isn't running would mute it, so elements join once it runs.
     boostCtx.onstatechange = check;
     setTimeout(check, 300);
@@ -182,7 +186,7 @@
     if (routed.has(el) && (e.type === "loadstart" || e.type === "emptied" ||
       (e.type === "playing" && sources.has(el) && sources.get(el) !== el.currentSrc))) newSource();
     if (e.type === "playing") sources.set(el, el.currentSrc);
-    if (voice && hum.lock && e.type === "playing") stableVolume(true);   // the player may not have existed before
+    if (voice && lifted() && e.type === "playing") stableVolume(true);   // the player may not have existed before
     report();
   };
   const mediaEvents = ["play", "playing", "pause", "ended", "emptied", "loadstart", "encrypted", "volumechange"];
@@ -209,20 +213,21 @@
     analyser.channelCount = 1;   // left and right mixed, as a mono voice fix plays it
     analyser.channelCountMode = "explicit";
     connect.call(input, analyser);
-    // Left, right and their difference, from the last 4096 samples (a mono source counts as both sides).
+    // Left and right (their last 16384 samples, for shapeJudge()'s lag, and the last 4096 for their levels), and
+    // their difference (the last 4096). A mono source counts as both sides.
     const both = node(ctx.createGain());
     both.channelCount = 2;
     both.channelCountMode = "explicit";
     const split = node(ctx.createChannelSplitter(2)), minus = node(ctx.createGain());
     minus.gain.value = -1;
-    const meter = () => {
+    const meter = (size = 4096) => {
       const a = node(ctx.createAnalyser());
-      a.fftSize = 4096;
+      a.fftSize = size;
       a.channelCount = 1;
       a.channelCountMode = "explicit";
       return a;
     };
-    const left = meter(), right = meter(), diff = meter();
+    const left = meter(16384), right = meter(16384), diff = meter();
     connect.call(input, both);
     connect.call(both, split);
     connect.call(split, left, 0);
@@ -230,10 +235,11 @@
     connect.call(split, diff, 0);
     connect.call(split, minus, 1);
     connect.call(minus, diff);
-    const options = { sampleRate: ctx.sampleRate, fftSize: analyser.fftSize, ...timing() };
+    const options = { sampleRate: ctx.sampleRate, fftSize: analyser.fftSize, ...timing() };   // (fftSize: the hum's)
     const detector = tools.humDetector(options), judge = tools.shapeJudge(options);
     const spectrum = new Float32Array(analyser.frequencyBinCount), wave = new Float32Array(analyser.fftSize);
     const side = new Float32Array(4096), binHz = ctx.sampleRate / analyser.fftSize;
+    const leftWave = new Float32Array(left.fftSize), rightWave = new Float32Array(right.fftSize);
     const meanSquare = (a, from = 0) => {
       let sum = 0;
       for (let i = from; i < a.length; i++) sum += a[i] * a[i];
@@ -257,16 +263,16 @@
       if (shaped && heard) return;
       analyser.getFloatFrequencyData(spectrum);
       if (!shaped) {
-        left.getFloatTimeDomainData(side);
-        const l = meanSquare(side);
-        right.getFloatTimeDomainData(side);
-        const r = meanSquare(side);
+        left.getFloatTimeDomainData(leftWave);
+        right.getFloatTimeDomainData(rightWave);
         diff.getFloatTimeDomainData(side);
         const shape = judge({
-          level: rms, l, r, side: meanSquare(side) / 4, mid: meanSquare(wave, wave.length - 4096),
-          low: band(160, 320), core: band(1000, 4000),
+          level: rms, l: meanSquare(leftWave, leftWave.length - 4096), r: meanSquare(rightWave, rightWave.length - 4096),
+          side: meanSquare(side) / 4, mid: meanSquare(wave, wave.length - 4096), low: band(160, 320),
+          core: band(1000, 4000), left: leftWave, right: rightWave,
         });
-        if (shape) { shaped = true; useShape(shape); }
+        // Used at once; it may still be listening for a lag (until settled).
+        if (shape) { shaped = shape.settled; useShape(shape); }
       }
       if (found !== undefined || heard) return;
       const answer = detector.frame(spectrum, rms);
@@ -303,22 +309,27 @@
     hum.shape = shape;
     boostStage?.setShape(shape);
     forEachStage((stage) => stage.setShape(shape));
+    if (voice && shape.lag) stableVolume(true);
     tellHum();
   }
+  // What Stable Volume makes worse by lifting the pauses: hum, and the room a second mic far back hears (on the talk
+  // the echo fix was made for, its hiss came up 3.5 dB against the voice, and the voice sounded less clear).
+  const lifted = () => !!hum.lock || !!hum.shape?.lag;
   function useHum(family, pitch) {
     hum.lock = family;
     hum.pitch = pitch;
     hum.result = family ? String(family) : "none";
     boostStage?.setFamily(family, pitch);
     forEachStage((stage) => stage.setFamily(family, pitch));
-    if (voice && family) stableVolume(true);   // only for hum: Stable Volume lifts it with the pauses
+    if (voice && family) stableVolume(true);   // Stable Volume lifts it with the pauses (lifted())
     tellHum();
   }
-  // What voice fix found, for the dialog: { hum: "" | "50" | "60" | "none", mono, boom } (mono and boom null until
-  // judged), as text.
+  // What voice fix found, for the dialog: { hum: "" | "50" | "60" | "none", mono, echo, boom } (null until judged;
+  // echo: the channels were lined up), as text.
   const tellHum = () => {
     if (!hum.result && !hum.shape) return;
-    const detail = JSON.stringify({ hum: hum.result, mono: hum.shape?.mono ?? null, boom: hum.shape?.boom ?? null });
+    const { shape } = hum;
+    const detail = JSON.stringify({ hum: hum.result, mono: shape?.mono ?? null, echo: shape ? !!shape.lag : null, boom: shape?.boom ?? null });
     window.dispatchEvent(new CustomEvent("nerdfader3:hum", { detail }));
   };
   function newSource() {
@@ -344,8 +355,9 @@
   }
 
   // YouTube's Stable Volume (on by default) plays a compressed copy of the sound: quiet moments come up 5 to 8 dB
-  // closer to the voice, and with them the hum and noise voice fix is there to take away. While voice fix is on, it
-  // is turned off in this tab's player, and back on when voice fix goes off. YouTube saves the choice for every tab,
+  // closer to the voice, and with them the hum and noise voice fix is there to take away. While voice fix is on and
+  // has found hum or a second mic's echo (lifted()), it is turned off in this tab's player, and back on when voice
+  // fix goes off. YouTube saves the choice for every tab,
   // so the saved one is put back straight away: other tabs, and this one after a reload, keep the user's own.
   // If the user changes Stable Volume themselves while voice fix is on, that's their choice: YouTube saves every change
   // made in its menu (with the time, so even switching it back counts), and once that saved choice differs from the
@@ -354,13 +366,45 @@
   // These are the player's own methods. If they stop working (YouTube changed them), a moment later the player still
   // reports Stable Volume, or can't say, and voice fix counters it instead: it turns quiet moments back down by about
   // as much as Stable Volume lifted them (content/voice.js).
+  // Stable Volume also plays louder: YouTube's statistics give the content's loudness with it ("DRC (cont.-18.1dB")
+  // and without (-28.1 dB on the talk the echo fix was made for; 1 to 2 dB on most). Voice fix makes up that
+  // difference (up to 12 dB) once the player reports the plain copy, which is within about 200 ms, and drops it again
+  // if Stable Volume comes back on (the user's menu): checked every second.
   const onYouTube = () => /(^|\.)youtube(-nocookie)?\.com$/.test(location.hostname) || !!document.getElementById("movie_player");
   const PREF = "yt-player-drc-pref";
   const savedChoice = () => { try { return localStorage.getItem(PREF); } catch { return null; } };
   // off: this tab's Stable Volume was turned off here. mark: the user's saved choice just after that. theirs: they
   // changed it since, so it's theirs until voice fix goes off.
   const stable = previous?.stable ?? { off: previous?.stableOff ?? false, mark: savedChoice(), theirs: false };
-  let stableCheck = 0, counterWanted = false, counter = null;
+  let stableCheck = 0, counterWanted = false, counter = null, makeupWatch = 0;
+  // The content loudness the player reports (dB), and whether that's Stable Volume's copy.
+  const playerLoudness = () => {
+    try {
+      const text = document.getElementById("movie_player").getStatsForNerds().volume ?? "";
+      const db = Number(/cont\.\s*(-?[\d.]+)\s*dB/.exec(text)?.[1]);
+      return { db: Number.isFinite(db) ? db : null, drc: /\bDRC\b/.test(text) };
+    } catch {
+      return { db: null, drc: false };
+    }
+  };
+  function useMakeup(db) {
+    makeupDb = stable.makeup = db;
+    boostStage?.setMakeup(db);
+    clearInterval(makeupWatch);
+    if (db) makeupWatch = setInterval(() => { if (playerLoudness().drc) useMakeup(0); }, 1000);
+  }
+  // Waits for the player to report the plain copy, then makes up the difference from before (with Stable Volume).
+  function makeUp(before) {
+    useMakeup(0);
+    if (before.db === null || !before.drc) return;
+    const start = Date.now();
+    makeupWatch = setInterval(() => {
+      const now = playerLoudness();
+      if (!now.drc && now.db !== null) useMakeup(Math.min(12, Math.max(0, before.db - now.db)));
+      else if (Date.now() - start > 3000) clearInterval(makeupWatch);
+    }, 100);
+  }
+  if (makeupDb) useMakeup(makeupDb);   // handed over: watch it again
   function stableVolume(off) {
     if (!onYouTube()) return;
     if (stable.off && savedChoice() !== stable.mark) {
@@ -376,14 +420,17 @@
     };
     try {
       if (off && !stable.off && !stable.theirs && typeof player?.setDrcUserPreference === "function" && player.getDrcUserPreference()) {
+        const before = playerLoudness();
         turn(false);
         Object.assign(stable, { off: true, mark: savedChoice() });
+        makeUp(before);
       } else if (!off && stable.off) {
         turn(true);
         stable.off = false;
       }
     } catch {}
     clearTimeout(stableCheck);
+    if (!off || !stable.off) useMakeup(0);
     if (!off) return setCounter(false);
     // Whether it worked shows once the player has switched to the other copy of the sound.
     stableCheck = setTimeout(() => setCounter(voice && !stableVolumeIsOff()), 3000);
@@ -481,7 +528,7 @@
       maybeDetect();
       report();
     }
-    stableVolume(voice && !!hum.lock);   // (also after an update, which needs the counter started again)
+    stableVolume(voice && lifted());   // (also after an update, which needs the counter started again)
     if (!voice) stable.theirs = false;
     if (voice) tellHum();   // a new copy of bridge.js asks again after an update
   };
@@ -497,6 +544,7 @@
     stopDetect();
     clearTimeout(stableCheck);
     clearInterval(counter);
+    clearInterval(makeupWatch);
     clearInterval(fresh?.timer);
     for (const type of mediaEvents) document.removeEventListener(type, onMedia, true);
     removeEventListener("pointerdown", wake, true);

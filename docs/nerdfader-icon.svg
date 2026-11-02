@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="128" height="128" viewBox="0 0 128 128">
+  <!-- Nerdfader's icon: a potentiometer as a schematic draws it (a resistor with an arrow through it), in ink and a
+       red pen on datasheet paper. extension/icons/ are rendered from this (and a pixel-aligned 16 px version) by
+       Tools/render-icons.mjs. -->
+  <defs>
+    <pattern id="grid" width="12" height="12" patternUnits="userSpaceOnUse">
+      <path d="M12 0H0V12" fill="none" stroke="#1f55c9" stroke-opacity="0.12" stroke-width="1"/>
+    </pattern>
+  </defs>
+  <rect x="1.5" y="1.5" width="125" height="125" rx="25" fill="#f8f7f2" stroke="#15171b" stroke-width="3"/>
+  <rect x="1.5" y="1.5" width="125" height="125" rx="25" fill="url(#grid)"/>
+  <path d="M10 64H26M102 64H118" stroke="#15171b" stroke-width="4"/>
+  <rect x="26" y="47" width="76" height="34" fill="#f8f7f2" stroke="#15171b" stroke-width="5"/>
+  <path d="M24 104L94 34" stroke="#c21f35" stroke-width="7" stroke-linecap="square"/>
+  <path d="M108 20L80 26L102 48Z" fill="#c21f35"/>
+</svg>

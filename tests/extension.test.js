@@ -103,7 +103,29 @@ function liftedWav(secs) {
   }
   return b;
 }
-const sounds = { "/tone.wav": wav(30), "/gap.wav": wav(1, 5, 30), "/loud.wav": loudWav(30), "/talk.wav": talkWav(30), "/lifted.wav": liftedWav(40) };
+// A stage show with a second mic far back, as 48 kHz stereo: the near mic on the right (a 175 Hz tone, and the low
+// rumble of a voice: noise below 300 Hz, 1 s on and 0.5 s off), and the far one on the left hearing all that 60 ms
+// later and quieter, with a hiss of its own. Mixed as it is, the tone and its echo 60 ms later (10.5 cycles) cancel.
+function echoWav(secs) {
+  const rate = 48000, total = secs * rate, lag = 0.06 * rate, b = Buffer.alloc(44 + total * 4);
+  b.write("RIFF", 0); b.writeUInt32LE(36 + total * 4, 4); b.write("WAVEfmt ", 8); b.writeUInt32LE(16, 16);
+  b.writeUInt16LE(1, 20); b.writeUInt16LE(2, 22); b.writeUInt32LE(rate, 24); b.writeUInt32LE(rate * 4, 28);
+  b.writeUInt16LE(4, 32); b.writeUInt16LE(16, 34); b.write("data", 36); b.writeUInt32LE(total * 4, 40);
+  let seed = 11, low = 0, lower = 0;
+  const rand = () => ((seed = (seed * 1664525 + 1013904223) >>> 0) / 2 ** 32) * 2 - 1;
+  const near = new Float32Array(total + lag);
+  for (let i = 0; i < near.length; i++) {
+    const t = i / rate;
+    low += 0.04 * (rand() - low); lower += 0.04 * (low - lower);
+    near[i] = 0.03 * Math.sin(2 * Math.PI * 175 * t) + (t % 1.5 < 1 ? 1.5 * lower : 0);
+  }
+  for (let i = 0; i < total; i++) {
+    b.writeInt16LE(Math.round(32767 * (0.8 * near[i] + 0.002 * rand())), 44 + i * 4);
+    b.writeInt16LE(Math.round(32767 * near[i + lag]), 46 + i * 4);
+  }
+  return b;
+}
+const sounds = { "/tone.wav": wav(30), "/gap.wav": wav(1, 5, 30), "/loud.wav": loudWav(30), "/talk.wav": talkWav(30), "/lifted.wav": liftedWav(40), "/echo.wav": echoWav(30) };
 
 before(async () => {
   server = http.createServer((req, res) => {
@@ -545,7 +567,7 @@ test("the toolbar icon opens a dialog in the page that changes the tab, and clos
   await send({ type: "setTab", tabId, percent: 100 });
   await page.close();
 
-  // SCREENSHOT=docs/dialog.png npm test: renders the dialog for the README.
+  // SCREENSHOT=docs/dialog.png npm test: renders the dialog for the README, light, and dark next to it (dialog-dark.png).
   if (process.env.SCREENSHOT) {
     const demo = await context.newPage();
     await demo.setViewportSize({ width: 880, height: 620 });
@@ -553,13 +575,17 @@ test("the toolbar icon opens a dialog in the page that changes the tab, and clos
     await demo.goto(demoOrigin + "/demo");
     const demoId = await tabIdOf(demoOrigin);
     await send({ type: "setTab", tabId: demoId, percent: 250 });
-    // voice_fix on, as it looks once it has found hum.
+    // voice_fix on, as it looks once it has found a second mic's echo.
     await send({ type: "setVoice", tabId: demoId, on: true });
-    await sw.evaluate((tabId) => chrome.storage.session.set({ [`hum:${tabId}`]: { 0: JSON.stringify({ hum: "60", mono: true, boom: true }) } }), demoId);
+    await sw.evaluate((tabId) => chrome.storage.session.set({ [`hum:${tabId}`]: { 0: JSON.stringify({ hum: "none", mono: true, echo: true, boom: true }) } }), demoId);
+    await demo.emulateMedia({ colorScheme: "light" });
     await openDialog(demo, demoId);
     await demo.evaluate(() => document.activeElement?.blur());
     await wait(300);
     await demo.screenshot({ path: process.env.SCREENSHOT });
+    await demo.emulateMedia({ colorScheme: "dark" });
+    await wait(300);
+    await demo.screenshot({ path: process.env.SCREENSHOT.replace(/\.png$/, "-dark.png") });
     await send({ type: "setTab", tabId: demoId, percent: 100 });
     await send({ type: "setVoice", tabId: demoId, on: false });
     await demo.close();
@@ -908,23 +934,37 @@ test("capture mode's info button explains it without flipping the switch; the sc
   await page.close();
 });
 
-test("all 20 volume segments are the same width, with a gap marking 100%", async () => {
+test("the volume scale: 21 ticks a whole number of pixels apart, 1.0 at 100%, the line red past it, within the bar", async () => {
   const popup = await context.newPage();
   await popup.addInitScript(() => { chrome.tabs.query = async () => [{ id: 1, url: "https://example.com/" }]; });
   await popup.goto(ext.url());
-  await popup.locator(".percent").waitFor();
-  const widths = await popup.evaluate(() => [...document.querySelectorAll(".segments i")].map((i) => Math.round(i.getBoundingClientRect().width * 10) / 10));
-  assert.equal(widths.length, 20);
-  assert.ok(widths.every((w) => w === widths[0] && Number.isInteger(w)), `equal, whole-pixel widths: ${widths.join(", ")}`);
-  const [ten, eleven, nine] = await popup.evaluate(() => [10, 11, 9].map((n) => document.querySelectorAll(".segments i")[n - 1].getBoundingClientRect()));
-  assert.ok(eleven.left - ten.right > (ten.left - nine.right) + 0.5, "a wider gap between 100% and the boost half");
-  // The brackets hug the segments: the same small space between "[" and the first segment as between the last and "]".
-  const [open, close, first, last] = await popup.evaluate(() => {
-    const [o, c] = document.querySelectorAll(".bracket");
-    const segs = document.querySelectorAll(".segments i");
-    return [o.getBoundingClientRect(), c.getBoundingClientRect(), segs[0].getBoundingClientRect(), segs[19].getBoundingClientRect()];
+  await popup.locator(".scale .tick").first().waitFor({ state: "attached" });   // (a 1 px line counts as hidden)
+  const look = () => popup.evaluate(() => {
+    const x = (el) => Number(el.getAttribute("x1"));
+    const ticks = [...document.querySelectorAll(".scale .tick")].map(x);
+    const box = (sel) => document.querySelector(sel).getBoundingClientRect();
+    const level = document.querySelector(".scale .level"), over = document.querySelector(".scale .over");
+    return {
+      ticks, unity: x(document.querySelector(".scale .unity")), levelEnd: Number(level.getAttribute("x2")),
+      over: over && [x(over), Number(over.getAttribute("x2"))], past: document.querySelector(".scale .wedge").classList.contains("past"),
+      scale: box(".scale"), bar: box(".bar"), percent: box(".percent"), panel: box(".nf"),
+    };
   });
-  assert.ok(Math.abs((first.left - open.right) - (close.left - last.right)) < 1 && first.left - open.right < 7, "brackets hug the segments");
+  const at100 = await look();
+  assert.equal(at100.ticks.length, 21);
+  const gaps = at100.ticks.slice(1).map((t, i) => t - at100.ticks[i]);
+  assert.ok(gaps.every((g) => g === gaps[0] && Number.isInteger(g) && g >= 6), `even, whole-pixel steps: ${gaps.join(", ")}`);
+  assert.equal(at100.unity, at100.ticks[10], "1.0 marks the middle tick");
+  assert.equal(at100.levelEnd, at100.unity, "at 100% the line ends at 1.0");
+  assert.equal(at100.over, null, "nothing in red");
+  assert.ok(at100.scale.left >= at100.bar.left - 1 && at100.scale.right <= at100.bar.right + 1, "the scale stays within the bar");
+  assert.ok(at100.percent.right <= at100.panel.right, "and the percentage stays in the panel");
+  for (let i = 0; i < 6; i++) await popup.keyboard.press("ArrowRight");   // 25% a step above 100: 250%
+  await popup.locator(".scale .over").waitFor({ state: "attached" });
+  const boosted = await look();
+  assert.deepEqual(boosted.over, [boosted.unity, boosted.ticks[13]], "red from 1.0 to 250% (three steps on)");
+  assert.equal(boosted.past, true, "the wedge in red too");
+  await popup.keyboard.press("r");
   await popup.close();
 });
 
@@ -1323,6 +1363,49 @@ test("on YouTube, voice fix turns Stable Volume off in that tab only, or counter
   await other.page.close();
 });
 
+test("voice fix plays only the near mic when a second one echoes it, with Stable Volume off and its loudness made up", async () => {
+  const { page, tabId } = await openPlayer("/echo.wav");
+  await page.evaluate(() => {
+    window.__nerdfaderHumTiming = { lockAfter: 3, giveUpAfter: 4 };
+    // On YouTube, with Stable Volume on: it lifts the far mic's room with the pauses, so it goes off for an echo too,
+    // and the loudness it gave (6 dB here, by the player's statistics) is made up.
+    const p = document.createElement("div");
+    p.id = "movie_player";
+    document.body.append(p);
+    window.drc = 1;
+    p.getDrcUserPreference = () => window.drc;
+    p.setDrcUserPreference = (on) => { window.drc = on; };
+    p.getStatsForNerds = () => ({ volume: window.drc ? "100%/100% DRC (cont.-18.1dB tgt.-14.0dB)" : "100%/100% (cont.-24.1dB tgt.-14.0dB)" });
+  });
+  const before = await ears(tabId, [175]);
+  await send({ type: "setVoice", tabId, on: true });
+  assert.equal(await until(async () => (await send({ type: "state", tabId })).shape?.echo, 8000), true, "the echo found");
+  await wait(500);
+  const on = await ears(tabId, [175]);
+  // The near mic alone, in both ears: mixed as they were, the tone and its echo would cancel (about 20 dB down).
+  // Against the right ear before: 6 dB made up, 0.9 dB down to the two channels' average (0.8² and 1), and less boom
+  // takes 3.8 dB off at 175 Hz: about +1.3 dB.
+  const change = on[0].at[0] - before[1].at[0];
+  assert.ok(Math.abs(change - 1.3) < 1.5, `the near mic, made up (${change.toFixed(1)} dB)`);
+  assert.ok(Math.abs(on[0].at[0] - on[1].at[0]) < 0.5, "both ears the same");
+  assert.equal(await page.evaluate(() => window.drc), false, "Stable Volume off for the echo");
+  // The user turns Stable Volume back on: its loudness is back, so the made-up 6 dB goes.
+  await page.evaluate(() => { window.drc = 1; });
+  await wait(1500);
+  const theirs = await ears(tabId, [175]);
+  assert.ok(Math.abs(on[0].at[0] - theirs[0].at[0] - 6) < 1, `made-up loudness dropped (${(on[0].at[0] - theirs[0].at[0]).toFixed(1)} dB)`);
+  await page.evaluate(() => { window.drc = false; });
+  const popup = await context.newPage();
+  await popup.addInitScript(([tabId, url]) => { chrome.tabs.query = async () => [{ id: tabId, url }]; }, [tabId, page.url()]);
+  await popup.goto(ext.url());
+  await popup.locator(".voiceHint", { hasText: "both ears, echo removed, less boom" }).waitFor();
+  await popup.close();
+  await send({ type: "setVoice", tabId, on: false });
+  await wait(300);
+  assert.equal(await page.evaluate(() => window.drc), true, "and back on with voice fix off");
+  await page.close();
+});
+
 test("voice fix leaves a recording that is already fine as it is: same level, same peaks, nothing to fix", async () => {
   // The same in both ears, no boom, no hum: loud.wav (1 kHz, peaks near full scale).
   const { page, tabId } = await openPlayer("/loud.wav");
@@ -1336,7 +1419,7 @@ test("voice fix leaves a recording that is already fine as it is: same level, sa
   await send({ type: "setVoice", tabId, on: true });
   assert.equal(await until(async () => { const s = await send({ type: "state", tabId }); return s.hum === "none" && s.shape; }, 10000) && true, true, "listened");
   const state = await send({ type: "state", tabId });
-  assert.deepEqual(state.shape, { mono: false, boom: false });
+  assert.deepEqual(state.shape, { mono: false, echo: false, boom: false });
   const after = await average();
   assert.ok(Math.abs(after.db - before.db) < 0.5, `same level (${before.db.toFixed(1)} -> ${after.db.toFixed(1)} dB)`);
   assert.ok(after.clipped <= before.clipped + 1e-4, "no clipping added");

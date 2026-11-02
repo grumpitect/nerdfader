@@ -179,6 +179,7 @@ test("a recording that is the same in both ears is left in stereo, as loud as it
 test("the voice in one ear: mixed to mono, 3 dB up so it is as loud as before, with less boom", () => {
   const r = judge(voice, stereo(10, 12, [[talk, 1, 0.2]]), RATE);
   assert.equal(r.mono, true);
+  assert.equal(r.lag, 0, "the same sound at once: nothing to line up");
   assert.ok(Math.abs(r.mixDb - 1.6) < 0.5, `mix ${r.mixDb.toFixed(2)} dB`);   // (1 + 0.04) / 2 against ((1.2) / 2)^2
   assert.equal(r.boom, true);
 });
@@ -192,6 +193,7 @@ test("two mics in a room (left and right unrelated): mixed to mono, about 3 dB u
   };
   const r = judge(voice, stereo(10, 13, [[talk, 1, 0], [later, 0, 1]]), RATE);
   assert.equal(r.mono, true);
+  assert.equal(r.lag, 0, "nothing to line up");
   assert.ok(Math.abs(r.mixDb - 3) < 0.6, `mix ${r.mixDb.toFixed(2)} dB`);
 });
 
@@ -200,6 +202,27 @@ test("a boomy recording in both ears gets less boom; a clean one doesn't", () =>
   assert.deepEqual([boomy.mono, boomy.boom], [false, true]);
   const clean = judge(voice, stereo(10, 15, [[talk, 1, 1]]), RATE);
   assert.equal(clean.boom, false, "clean talk: no low-end cut");
+});
+
+test("a second mic further back (the same talk 60 ms later, with a room of its own): the near one alone", () => {
+  // The near mic on the right; the far one on the left hears it 60 ms later and quieter, and someone else nearby.
+  const lag = Math.round(0.06 * RATE);
+  const seconds = 10, n = seconds * RATE, near = recording(seconds + 1, 31, talk), other = recording(seconds, 32, talk);
+  const both = new Float32Array(2 * n);
+  for (let i = 0; i < n; i++) {
+    both[2 * i + 1] = near[i + lag];
+    both[2 * i] = 0.6 * near[i] + 0.5 * other[(i + Math.round(0.73 * RATE)) % n];
+  }
+  const r = judge(voice, both, RATE);
+  assert.equal(r.mono, true);
+  assert.ok(Math.abs(r.lag - 0.06) < 0.0005, `the left is ${(r.lag * 1000).toFixed(1)} ms behind`);
+  assert.ok(r.settledAt < 6.5, `found at ${r.settledAt.toFixed(1)} s`);
+  // The near one alone, at the two channels' average: (0.36 + 0.25 + 1) / 2 against 1, about -0.9 dB.
+  assert.ok(Math.abs(r.mixDb + 0.9) < 0.5, `gain ${r.mixDb.toFixed(2)} dB`);
+  // The other way round: negative.
+  const swapped = new Float32Array(2 * n);
+  for (let i = 0; i < n; i++) { swapped[2 * i] = both[2 * i + 1]; swapped[2 * i + 1] = both[2 * i]; }
+  assert.ok(Math.abs(judge(voice, swapped, RATE).lag + 0.06) < 0.0005, "right behind: negative");
 });
 
 test("decisions come early when the evidence is plain", () => {

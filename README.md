@@ -14,7 +14,10 @@ both ears and takes out mains hum and boom.
 Made for the [Nerdative](https://www.youtube.com/@nerdative) channel on YouTube, by the same person as
 [Nerdwave](https://github.com/grumpitect/nerdwave).
 
-<p align="center"><img src="docs/dialog.png" width="660" alt="Nerdfader's dialog over a page"></p>
+<p align="center"><picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/dialog-dark.png">
+  <img src="docs/dialog.png" width="660" alt="Nerdfader's dialog over a page">
+</picture></p>
 
 ## Features
 
@@ -27,26 +30,30 @@ Made for the [Nerdative](https://www.youtube.com/@nerdative) channel on YouTube,
   mode: once for that tab, or always. It runs only while the tab plays sound: it stops a moment after the tab
   pauses or goes quiet, and starts again when it plays. The ⓘ next to capture_mode in the dialog explains it.
 - **voice_fix, for badly recorded talks.** Turn it on (or press **v** in the dialog) for a talk or interview where
-  the voice sits in one ear, mains hum buzzes underneath, or the low end booms. It listens for a few seconds first
+  the voice sits in one ear, a second mic adds an echo, mains hum buzzes underneath, or the low end booms. It listens for a few seconds first
   and fixes only what it finds, so a talk that's already fine plays exactly as it was:
   - left and right differ (two mics in a room, or the voice in one ear): mixed to mono, so the voice comes out of
     both ears, at a level that keeps it as loud as before, with less boom (the rumble below 80 Hz cut, 200 Hz down
     4 dB);
+  - one mic's sound reaching a second mic further back in the room, a moment later (a stage show recorded with a
+    room mic): only the near mic plays, in both ears, so you don't hear every word twice, nor the far mic's room;
   - a heavy low end in an otherwise fine recording: less boom on its own;
   - mains hum at 50 or 60 Hz: narrow notches take it out.
 
-  The hint says what it's doing: "listening" (with a line of light running under it), then for example "both ears,
+  The hint says what it's doing: "listening" (with a small sine trace running under it, like an oscilloscope), then for example "both ears,
   less boom, 60 Hz hum removed", or "nothing to fix". Both ears and less boom are decided in about 2 seconds, hum in
-  2 to 15, and "nothing to fix" in about 15 seconds of sound. It's per tab, stays on while the tab stays on the same site, and turns off when it moves to
+  2 to 15, and "nothing to fix" in about 15 seconds of sound. A second mic's echo is usually found with both ears,
+and always within 6 seconds. It's per tab, stays on while the tab stays on the same site, and turns off when it moves to
   another one. The badge reads **fix** at 100%. It works on the sites the in-page boost works on, not through
-  capture mode. When it finds hum on YouTube, it also turns off **Stable Volume** in that tab while it's on
-  (YouTube's default, which lifts the quiet moments, and the hum with them, 5 to 8 dB), and back on when voice_fix
+  capture mode. When it finds hum or a second mic's echo on YouTube, it also turns off **Stable Volume** in that tab while it's on
+  (YouTube's default, which lifts the quiet moments, and the hum or room noise with them, 5 to 8 dB), and back on when voice_fix
   goes off; your own YouTube setting and other tabs are left as they are. Change Stable Volume yourself in the
   meantime and Nerdfader leaves it as you set it in that tab, reloads included, until voice_fix goes off.
 - **Reset.** One click (or **r** in the dialog) puts the tab back to 100%; with all_tabs on, it resets every tab.
 - **all_tabs.** Turn it on and one slider sets every tab, including ones you open later. Turn it off and every
   tab goes back to the volume it had before.
 - **Badge.** The toolbar icon shows the tab's volume when it isn't 100%, and **fix** at 100% with voice_fix on.
+- **Light and dark.** The dialog and popup follow the system's appearance: ink on paper, or light lines on dark.
 - **Keys.** On any page (Ctrl instead of ⌘ on Windows and Linux):
 
   | Keys | Does |
@@ -137,12 +144,15 @@ each page (and each frame in it) that scales the page's own sound.
   out, it says there is none; otherwise it decides by a minute. Plain cases of the recording itself (two mics far
   apart, or identical channels with a light low end) are judged after 1.5 s instead of 6. When the next video plays in the same player, it checks again once
   that video has played 30 s, so an ad doesn't count.
-- **YouTube's Stable Volume** plays a compressed copy of the sound. Once voice_fix finds hum, it asks the tab's player to switch it off
+- **YouTube's Stable Volume** plays a compressed copy of the sound. Once voice_fix finds hum or a second mic's echo (Stable
+  Volume lifts their noise with the pauses), it asks the tab's player to switch it off
   (the player's own `setDrcUserPreference`) and puts back the choice YouTube saves for every tab, so only that tab
   changes. If the player can't do that any more, or still reports Stable Volume a few seconds later, voice_fix
   counters it instead: every 25 ms it measures the sound (30 ms ahead of what plays) and turns quiet moments back
   down by about as much as Stable Volume lifted them, measured on a talk (up to 7 dB). It scales that by how
-  compressed the sound is, so sound that isn't Stable Volume's is left nearly alone.
+  compressed the sound is, so sound that isn't Stable Volume's is left nearly alone. Stable Volume's copy is also
+  louder (1 to 2 dB on most videos, 10 dB on one talk), by the loudness the player reports for each copy; voice_fix
+  makes up that difference while Stable Volume is off, so the talk doesn't get quieter.
 
 The browser won't let a page's script process three kinds of sound, so those can't be boosted from inside:
 protected (DRM) media, media from another site that doesn't allow it, and sound in a page you haven't clicked yet
@@ -211,10 +221,9 @@ To try a change, load the `extension` folder with **Load unpacked** and click th
 - `extension/ui/panel.js`: the panel (slider, reset, switches, capture offer), shared by the dialog and the popup.
 - `extension/ui/overlay.js`: the in-page dialog.
 - `extension/popup/`: the toolbar popup, for pages the dialog can't open in.
-- `Tools/make_icon.py`: regenerates the icons (`pip install pillow numpy`, then
-  `python3 Tools/make_icon.py extension/icons`; `python3 Tools/make_icon.py --png docs/nerdfader-icon.png 1024`
-  renders the README version).
-- `SCREENSHOT=docs/dialog.png npm test` re-renders the README screenshot.
+- `docs/nerdfader-icon.svg`: the icon. `node Tools/render-icons.mjs` renders `extension/icons/` from it (with a
+  pixel-aligned drawing for 16 px) and the README version, `docs/nerdfader-icon.png`.
+- `SCREENSHOT=docs/dialog.png npm test` re-renders the README screenshots (light, and `docs/dialog-dark.png`).
 
 Maintainers publish a release with `./release.sh` (patch bump by default; `minor`, `major` or an exact `X.Y.Z`
 also work). It runs the tests (all three suites), bumps the version in `manifest.json`, zips the extension, tags,

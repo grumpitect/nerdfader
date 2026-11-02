@@ -18,22 +18,27 @@
   inset: 0;
   display: grid;
   place-items: center;
-  background: rgba(12, 6, 28, 0.35);
-  -webkit-backdrop-filter: blur(8px) saturate(0.9);
-  backdrop-filter: blur(8px) saturate(0.9);
-  animation: fade 140ms ease-out;
+  background: rgba(20, 22, 27, 0.28);
+  -webkit-backdrop-filter: blur(6px) saturate(0.85);
+  backdrop-filter: blur(6px) saturate(0.85);
+  animation: fade 100ms ease-out;
 }
+/* A sheet of the datasheet laid on the page: a thin ink edge, square corners, a soft shadow; it settles into place. */
 .dialog {
-  border: 1px solid #3a2366;
-  border-radius: 14px;
+  border: 1px solid #15171b;
+  border-radius: 2px;
   overflow: hidden;
-  box-shadow: 0 24px 70px rgba(0, 0, 0, 0.55), 0 0 0 1px rgba(255, 79, 168, 0.08), 0 0 40px rgba(255, 79, 168, 0.12);
-  animation: pop 160ms cubic-bezier(0.2, 0.9, 0.3, 1.2);
+  box-shadow: 0 18px 50px rgba(20, 22, 27, 0.22);
+  animation: settle 100ms ease-out;
 }
-.closing .backdrop { animation: fade 110ms ease-in reverse forwards; }
-.closing .dialog { animation: pop 110ms ease-in reverse forwards; }
+@media (prefers-color-scheme: dark) {
+  .backdrop { background: rgba(0, 0, 0, 0.35); }
+  .dialog { border-color: #ebe9e3; box-shadow: 0 18px 50px rgba(0, 0, 0, 0.5); }
+}
+.closing .backdrop { animation: fade 90ms ease-in reverse forwards; }
+.closing .dialog { animation: settle 90ms ease-in reverse forwards; }
 @keyframes fade { from { opacity: 0; } }
-@keyframes pop { from { opacity: 0; transform: scale(0.96) translateY(6px); } }
+@keyframes settle { from { opacity: 0; transform: translateY(1px); } }
 @media (prefers-reduced-motion: reduce) {
   .backdrop, .dialog, .closing .backdrop, .closing .dialog { animation: none; }
 }
@@ -90,7 +95,7 @@
     });
     wrap.classList.add("closing");
     const done = () => { host.remove(); previousFocus?.focus?.({ preventScroll: true }); };
-    matchMedia("(prefers-reduced-motion: reduce)").matches ? done() : setTimeout(done, 110);
+    matchMedia("(prefers-reduced-motion: reduce)").matches ? done() : setTimeout(done, 90);
   }
   host.addEventListener("nerdfader-close", close);
   addEventListener("pagehide", close);

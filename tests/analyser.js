@@ -65,12 +65,16 @@ export function detect(voice, samples, sampleRate, options = {}) {
 }
 
 // Runs shapeJudge over stereo samples (interleaved) like main.js does: every 100 ms, the last 4096 samples of left,
-// right, side and mid, and the low end and voice core from the mono spectrum.
+// right, side and mid, the low end and voice core from the mono spectrum, and the last 16384 of left and right.
+// Returns its settled answer, with at (when it first answered, in seconds of playback) and settledAt.
 export function judge(voice, stereo, sampleRate, options = {}) {
   const n = stereo.length / 2, fftSize = 16384, hop = Math.round(sampleRate * 0.1), W = 4096;
   const mono = new Float32Array(n);
   for (let i = 0; i < n; i++) mono[i] = 0.5 * (stereo[2 * i] + stereo[2 * i + 1]);
-  const next = voice.shapeJudge(options), read = analyser(fftSize), binHz = sampleRate / fftSize;
+  const next = voice.shapeJudge({ sampleRate, ...options }), read = analyser(fftSize), binHz = sampleRate / fftSize;
+  const left = new Float32Array(n), right = new Float32Array(n);
+  let first = null, last = null;
+  for (let i = 0; i < n; i++) { left[i] = stereo[2 * i]; right[i] = stereo[2 * i + 1]; }
   const band = (spectrum, lo, hi) => {
     let p = 0;
     for (let k = Math.ceil(lo / binHz); k < hi / binHz; k++) p += 10 ** (spectrum[k] / 10);
@@ -83,8 +87,11 @@ export function judge(voice, stereo, sampleRate, options = {}) {
       const a = stereo[2 * i], b = stereo[2 * i + 1];
       l += a * a; r += b * b; mid += ((a + b) / 2) ** 2; side += ((a - b) / 2) ** 2;
     }
-    const answer = next({ level: rms, l: l / W, r: r / W, mid: mid / W, side: side / W, low: band(spectrum, 160, 320), core: band(spectrum, 1000, 4000) });
-    if (answer) return { ...answer, at: end / sampleRate };
+    const answer = next({ level: rms, l: l / W, r: r / W, mid: mid / W, side: side / W, low: band(spectrum, 160, 320), core: band(spectrum, 1000, 4000),
+      left: left.subarray(end - fftSize, end), right: right.subarray(end - fftSize, end) });
+    // The first answer says when it was judged; a lag can come later, until it is settled.
+    if (answer) { first ??= { at: end / sampleRate }; last = answer; }
+    if (answer?.settled) return { ...answer, ...first, settledAt: end / sampleRate };
   }
-  return null;
+  return last && { ...last, ...first, settledAt: null };
 }

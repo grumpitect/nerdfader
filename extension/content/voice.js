@@ -2,14 +2,17 @@
 // removes it from the page again. Kept apart from main.js so the tests can run it on its own (tests/voice.test.js):
 // - outputStage(): what routed sound goes through on its way to the speakers: the tab's level, voice fix, and a soft
 //   clipper.
-// - shapeJudge(): tells whether left and right differ (to mix them to mono) and whether the low end is heavy.
+// - shapeJudge(): tells whether left and right differ (to mix them to mono, or to play only the one that arrives
+//   first, when the other is its sound later) and whether the low end is heavy.
 // - humDetector(): tells whether what is playing has mains hum at 50 or 60 Hz.
 // - stableVolumeCounter(): undoes most of YouTube's Stable Volume, for when the player won't turn it off (main.js).
 //
 // Voice fix is for badly recorded talks: the voice in one ear, mains hum, a boomy low end. It listens first and fixes
 // only what it finds (shapeJudge() and humDetector()), so a talk that is already fine passes as it is:
 // - left and right differ (two mics, or the voice in one ear): mixed to mono, at a gain that keeps it as loud as it
-//   was, with less boom: everything below 80 Hz cut and 200 Hz turned down 4 dB (also when the low end is heavy);
+//   was, with less boom: everything below 80 Hz cut and 200 Hz turned down 4 dB (also when the low end is heavy).
+//   When one channel is the other's sound arriving later (a second mic far back in the room, which hears mostly the
+//   room), only the earlier one plays, in both ears: mixed, every word would play twice (delayFinder());
 // - mains hum: narrow notches remove it: the 3rd harmonic, and every odd
 // harmonic from 500 to 6000 Hz (for 60 Hz: 180, 540, 660 ... 5940 Hz). The 5th and 7th (250 to 450 Hz) are left
 // alone: they sit in the body of the voice. Up to 2000 Hz the notches have a Q of 30; above that they are 20 Hz wide,
@@ -44,10 +47,12 @@ globalThis[Symbol.for("nerdfader.voice")] = (() => {
   // clipping. The shaper's input range is -1..1, so the signal is scaled down by 8 on the way in (600% of a
   // full-scale signal is 6).
   //
-  //   input (level) ─┬─ dry ────────────────────────────────────────────────────────────────────┬─ out ─ speakers,
-  //                  └─ (mono) ─ highpass ─ peaking ─ 56 notch slots ─ lookahead ─ counter ─ wet ┘   or the clipper
+  //   input (level) ─┬─ dry ───────────────────────────────────────────────────────────────────────┬─ out ─ speakers,
+  //                  └─ pick ─ (mono) ─ highpass ─ peaking ─ 56 notch slots ─ lookahead ─ counter ─ wet ┘   or the clipper
   //
-  // Each part of the wet path is flat until voice fix finds what it is for; lookahead and counter are for
+  // Each part of the wet path is flat until voice fix finds what it is for; pick keeps only the channel that arrives
+  // first when the other is its sound arriving later (shapeJudge()'s lag); wet's gain also makes up the loudness
+  // YouTube's Stable Volume gave, once it is switched off (setMakeup()); lookahead and counter are for
   // stableVolumeCounter(): no delay and no change unless it runs.
   //
   // Voice fix crossfades dry to wet over 50 ms, once it has found something to fix. The notch slots start flat
@@ -74,12 +79,21 @@ globalThis[Symbol.for("nerdfader.voice")] = (() => {
     connect.call(out, ctx.destination);
 
     let wanted = adopted ? input.gain.value : 1, voiceOn = false, family = null, pitch = null;
-    let shape = { mono: false, mixDb: 0, boom: false };
-    let wet = null, highpass = null, peaking = null, slots = null;
+    let shape = { mono: false, lag: 0, mixDb: 0, boom: false };
+    let makeupDb = 0;
+    let wet = null, pick = null, highpass = null, peaking = null, slots = null;
     let lookahead = null, counter = null, meter = null, counterDb = 0;
     // Built the first time voice fix has something to fix.
     const wetPath = () => {
       if (wet) return;
+      // Two channels first: a splitter alone would put a mono source in the left only.
+      const both = ctx.createGain(), split = ctx.createChannelSplitter(2), merge = ctx.createChannelMerger(2);
+      both.channelCount = 2;
+      both.channelCountMode = "explicit";
+      pick = [ctx.createGain(), ctx.createGain()];
+      connect.call(input, both);
+      connect.call(both, split);
+      pick.forEach((g, i) => { connect.call(split, g, i); connect.call(g, merge, 0, i); });
       highpass = ctx.createBiquadFilter();
       peaking = ctx.createBiquadFilter();
       peaking.frequency.value = 200;
@@ -94,15 +108,20 @@ globalThis[Symbol.for("nerdfader.voice")] = (() => {
       counter = ctx.createGain();
       wet = ctx.createGain();
       wet.gain.value = 0;
-      [input, highpass, peaking, ...slots, lookahead, counter, wet, out].reduce((a, b) => (connect.call(a, b), b));
+      [merge, highpass, peaking, ...slots, lookahead, counter, wet, out].reduce((a, b) => (connect.call(a, b), b));
       setChannels();
       setBoom();
       setFamily(family, pitch);
     };
-    // Mono: the browser mixes left and right in equally, 0.5 (L + R). Otherwise the filters keep the stereo.
-    const setChannels = () => {
+    // Mono: the browser mixes left and right in equally, 0.5 (L + R); with a lag, only the earlier one, at twice
+    // that (lag above 0: the left is behind, so the right alone). Otherwise the filters keep the stereo. at: when the
+    // channels change (s, context time).
+    const setChannels = (at = 0) => {
       highpass.channelCount = shape.mono ? 1 : 2;
       highpass.channelCountMode = shape.mono ? "explicit" : "max";
+      const lag = shape.mono ? shape.lag : 0;
+      pick[0].gain.setValueAtTime(lag > 0 ? 0 : lag < 0 ? 2 : 1, at);
+      pick[1].gain.setValueAtTime(lag < 0 ? 0 : lag > 0 ? 2 : 1, at);
     };
     // Less boom: 80 Hz high-pass (Butterworth: this type takes Q in dB) and 200 Hz down 4 dB. Otherwise both are flat
     // (a peaking filter at 0 dB changes nothing).
@@ -121,7 +140,7 @@ globalThis[Symbol.for("nerdfader.voice")] = (() => {
     // Voice fix plays the wet path only once it has found something to fix; until then, and when there is nothing,
     // the sound passes as it is.
     const active = () => voiceOn && (shape.mono || shape.boom || !!family);
-    const mix = () => (shape.mono ? 10 ** (shape.mixDb / 20) : 1);
+    const mix = () => 10 ** (((shape.mono ? shape.mixDb : 0) + makeupDb) / 20);
 
     let clipping = false, unclip = 0;
     const route = (now) => {
@@ -159,14 +178,28 @@ globalThis[Symbol.for("nerdfader.voice")] = (() => {
       voiceOn = on;
       apply(glide);
     };
-    // What shapeJudge() found: { mono, mixDb (the mono mix's gain, so it is as loud as the stereo was), boom }.
+    // What shapeJudge() found: { mono, lag, mixDb (the mono mix's gain, so it is as loud as the stereo was), boom }.
     function setShape(next, glide = true) {
-      const channels = !!next.mono !== shape.mono;
-      shape = { mono: !!next.mono, mixDb: next.mixDb ?? 0, boom: !!next.boom };
-      if (wet) {
-        if (channels) setChannels();
-        setBoom();
+      const was = shape;
+      shape = { mono: !!next.mono, lag: next.lag || 0, mixDb: next.mixDb ?? 0, boom: !!next.boom };
+      const moved = shape.mono !== was.mono || (shape.mono && Math.sign(shape.lag) !== Math.sign(was.lag));
+      if (!wet) return apply(glide);
+      setBoom();
+      if (!moved) return apply(glide);
+      const now = ctx.currentTime;
+      if (glide && active() && wet.gain.value > 0) {
+        // Changing channels while voice fix plays would jump with a click: the wet path dips out for 20 ms,
+        // changes, and comes back in 30.
+        wet.gain.cancelScheduledValues(0);
+        wet.gain.setValueAtTime(wet.gain.value, now);
+        wet.gain.linearRampToValueAtTime(0, now + 0.02);
+        setChannels(now + 0.02);
+        wet.gain.setValueAtTime(0, now + 0.02);
+        wet.gain.linearRampToValueAtTime(mix(), now + 0.05);
+        route(false);
+        return;
       }
+      setChannels(glide && wet.gain.value > 0 ? now + 0.05 : 0);   // fading out: after the fade
       apply(glide);
     }
     // Hum at 50 or 60 Hz, at its measured pitch, or null for none: retypes the slots at once, so main.js calls it
@@ -208,8 +241,15 @@ globalThis[Symbol.for("nerdfader.voice")] = (() => {
       counter.gain.setTargetAtTime(10 ** (db / 20), ctx.currentTime, db > counterDb ? 0.01 : 0.08);
       counterDb = db;
     }
+    // The loudness YouTube's Stable Volume gave and switching it off took away (dB, 0 for none): on the talk the
+    // echo fix was made for, 10 dB. Only voice fix's sound gets it: Stable Volume is off only for voice fix.
+    function setMakeup(db) {
+      if (db === makeupDb) return;
+      makeupDb = db;
+      if (wet) apply(true);
+    }
     set(wanted, false);
-    return { input, set, setVoice, setShape, setFamily, setCounter, counterTo };
+    return { input, set, setVoice, setShape, setFamily, setMakeup, setCounter, counterTo };
   }
 
   // Finds mains hum in the frames it is given: the spectrum (dB per bin, as an AnalyserNode with smoothing 0 gives
@@ -309,21 +349,142 @@ globalThis[Symbol.for("nerdfader.voice")] = (() => {
     return detector;
   }
 
+  // An in-place radix-2 FFT of re and im (their length a power of 2); sign 1 is the inverse, unscaled.
+  function fft(re, im, sign = -1) {
+    const n = re.length;
+    for (let i = 1, j = 0; i < n; i++) {
+      let bit = n >> 1;
+      for (; j & bit; bit >>= 1) j ^= bit;
+      j ^= bit;
+      if (i < j) {
+        [re[i], re[j]] = [re[j], re[i]];
+        [im[i], im[j]] = [im[j], im[i]];
+      }
+    }
+    for (let size = 2; size <= n; size *= 2) {
+      const half = size / 2, step = (sign * 2 * Math.PI) / size;
+      for (let k = 0; k < half; k++) {
+        const c = Math.cos(step * k), s = Math.sin(step * k);
+        for (let a = k; a < n; a += size) {
+          const b = a + half, tr = re[b] * c - im[b] * s, ti = re[b] * s + im[b] * c;
+          re[b] = re[a] - tr; im[b] = im[a] - ti;
+          re[a] += tr; im[a] += ti;
+        }
+      }
+    }
+  }
+
+  // Finds whether one channel is the other's sound arriving later, as with a second mic far back in the room (on the
+  // talk this was made for, 21 m back: 63 ms). Mixed to mono as they are, every word plays twice. Each frame adds
+  // the cross spectrum of a window of left and right (Hann, zero padded to twice its length so lags don't wrap).
+  // answer() looks at 80 to 300 Hz, where a far mic still hears the voice clearly (above, it hears mostly the room),
+  // weighs each frequency by its own loudness in both channels (so a voice's pitch, which makes speech look like
+  // itself a few ms later, doesn't count), and turns that back into how well the channels match at each lag (1: the
+  // same sound), corrected for how much of the window still overlaps there. It finds the peak from 5 to 150 ms
+  // either way, and counts it when the match is MATCH or more and at least twice as good as within 5 ms of 0
+  // (channels that are mostly the same sound at once stay as they are). On that talk the match is about 0.6 at
+  // 64 ms within a second or two; on two mics side by side it stays under 0.3, and on identical channels under 0.4
+  // away from 0 (where it is 1).
+  // Returns { lag, match }: lag (s) is how far the left channel arrives after the right one (negative: the right
+  // comes later), 0 for none; match is how well they match there.
+  const MATCH = 0.4;
+  function delayFinder(sampleRate, size) {
+    const n = 2 * size, maxLag = Math.min(Math.round(0.15 * sampleRate), size / 2), minLag = Math.round(0.005 * sampleRate);
+    const lo = Math.ceil((80 * n) / sampleRate), hi = Math.floor((300 * n) / sampleRate);
+    const hann = new Float64Array(size);
+    for (let i = 0; i < size; i++) hann[i] = 0.5 - 0.5 * Math.cos((2 * Math.PI * i) / size);
+    const re = new Float64Array(n), im = new Float64Array(n), sumRe = new Float64Array(n), sumIm = new Float64Array(n);
+    const powerL = new Float64Array(n), powerR = new Float64Array(n);
+    let overlap = null, heard = false;
+    // Both channels in one transform: left as the real part, right as the imaginary part.
+    const add = (left, right) => {
+      re.fill(0); im.fill(0);
+      for (let i = 0; i < size; i++) { re[i] = left[i] * hann[i]; im[i] = right[i] * hann[i]; }
+      fft(re, im);
+      for (let k = lo; k <= hi; k++) {
+        const m = n - k;
+        const lr = (re[k] + re[m]) / 2, li = (im[k] - im[m]) / 2, rr = (im[k] + im[m]) / 2, ri = (re[m] - re[k]) / 2;
+        sumRe[k] += lr * rr + li * ri;   // left times the conjugate of right
+        sumIm[k] += li * rr - lr * ri;
+        powerL[k] += lr * lr + li * li;
+        powerR[k] += rr * rr + ri * ri;
+      }
+      heard = true;
+    };
+    const answer = () => {
+      if (!heard) return { lag: 0, match: 0 };
+      if (!overlap) {
+        // The window's overlap with itself at each lag: the inverse transform of its power spectrum.
+        const wr = new Float64Array(n), wi = new Float64Array(n);
+        wr.set(hann);
+        fft(wr, wi);
+        for (let k = 0; k < n; k++) { wr[k] = wr[k] * wr[k] + wi[k] * wi[k]; wi[k] = 0; }
+        fft(wr, wi, 1);
+        overlap = wr.map((v) => v / wr[0]);
+      }
+      // The band and its mirror (a real signal's), and nothing else.
+      re.fill(0); im.fill(0);
+      for (let k = lo; k <= hi; k++) {
+        const weight = Math.sqrt(powerL[k] * powerR[k]);
+        if (!(weight > 0)) continue;
+        re[k] = sumRe[k] / weight; im[k] = sumIm[k] / weight;
+        re[n - k] = re[k]; im[n - k] = -im[k];
+      }
+      fft(re, im, 1);
+      const scale = 2 * (hi - lo + 1);
+      const at = (j) => re[(j + n) % n] / scale / overlap[Math.abs(j)];
+      let near = 0, best = 0, lag = 0;
+      for (let j = -minLag + 1; j < minLag; j++) near = Math.max(near, at(j));   // within 5 ms of 0
+      for (let j = minLag; j <= maxLag; j++) {
+        for (const k of [j, -j]) if (at(k) > best) { best = at(k); lag = k; }
+      }
+      const found = best >= MATCH && best >= 2 * near;
+      return { lag: found ? lag / sampleRate : 0, match: best };
+    };
+    return { add, answer };
+  }
+
   // Judges the recording from frames of what plays (one per frameSeconds): its level (dBFS); the mean squares of left,
-  // right, and the side (L - R) / 2 and mid (L + R) / 2; and the power of the low end (160 to 320 Hz) and of the
-  // voice's core (1 to 4 kHz). From the louder half of lockAfter seconds of frames above -60 dBFS (the talking):
+  // right, and the side (L - R) / 2 and mid (L + R) / 2; the power of the low end (160 to 320 Hz) and of the voice's
+  // core (1 to 4 kHz); and the latest window of left and right (left, right: equal power-of-2 lengths, given with
+  // sampleRate), for delayFinder(). From the louder half of lockAfter seconds of frames above -60 dBFS (the talking):
   // - mono when left and right differ: they don't move together (the side is more than a tenth of the mid, as with two
   //   mics in a room), or one is 1.5 dB or more louder (the voice in one ear). Identical channels stay as they are.
-  // - mixDb: the mono mix's gain to be as loud as the two channels were: 3 dB for unrelated channels, 0 for identical.
+  // - lag: with mono, when one channel is the other's sound arriving later, how far the left one is behind (s;
+  //   negative: the right one), else 0. The stage then plays only the earlier one, so there is no echo.
+  // - mixDb: the mono mix's gain to be as loud as the two channels were: 3 dB for unrelated channels, 0 for identical
+  //   (with a lag, the earlier channel alone: up or down to the average of the two, by up to 3 dB).
   // - boom: with mono (the room and mics that need it), or when the low end is within 2 dB of the voice's core (a
   //   clean recording of a voice is 3 to 5 dB below).
-  // Returns null until it has heard enough (1.5 s when it is plain, otherwise lockAfter), then { mono, mixDb, boom }.
-  function shapeJudge({ frameSeconds = 0.1, lockAfter = 6 } = {}) {
+  // Returns null until it has heard enough (1.5 s when it is plain, otherwise lockAfter), then
+  // { mono, lag, mixDb, boom, settled }. A lag can take longer to be sure of than the rest: told mono without one
+  // before lockAfter, settled is false, and it keeps listening for one until lockAfter: then it answers once more,
+  // settled, with the lag it found or none.
+  function shapeJudge({ frameSeconds = 0.1, lockAfter = 6, sampleRate = 48000 } = {}) {
     const frames = [], earlyAfter = Math.min(1.5, lockAfter);
+    let delays = null, told = null;
+    // l, r, mid, side: the louder half's sums; delay: delayFinder()'s answer, or none.
+    const shape = ({ mono, boom, l, r, mid, side }, delay, settled) => {
+      const lag = mono && delay ? delay.lag : 0;
+      // mid and side together are (l + r) / 2, the two channels' average.
+      const mixDb = !mono ? 0 : lag ? Math.min(3, Math.max(-3, 10 * Math.log10((mid + side) / (lag > 0 ? r : l))))
+        : Math.min(3, Math.max(0, 10 * Math.log10((mid + side) / mid)));
+      return { mono, lag, mixDb, boom, settled };
+    };
     return (f) => {
-      if (!(f.level > -60)) return null;
+      if (!(f.level > -60) || told?.settled) return null;
       frames.push(f);
+      if (f.left) {
+        delays ??= delayFinder(sampleRate, f.left.length);
+        delays.add(f.left, f.right);
+      }
       const seconds = frames.length * frameSeconds;
+      if (told) {
+        const delay = delays.answer();
+        if (!delay.lag && seconds < lockAfter) return null;
+        told = { ...told, settled: true };
+        return shape(told, delay, true);
+      }
       if (seconds < earlyAfter) return null;
       const levels = frames.map((x) => x.level).sort((a, b) => a - b), median = levels[Math.floor(levels.length / 2)];
       let l = 0, r = 0, mid = 0, side = 0, low = 0, core = 0;
@@ -338,9 +499,10 @@ globalThis[Symbol.for("nerdfader.voice")] = (() => {
       if (seconds < lockAfter && !plain) return null;
       const together = mid > 0 && apart < 0.1;
       const mono = !together || !(imbalance < 1.5);
-      const mixDb = Math.min(3, Math.max(0, 10 * Math.log10((mid + side) / mid)));
-      const boom = mono || lowEnd > -2;
-      return { mono, mixDb: mono ? mixDb : 0, boom };
+      const delay = mono && delays ? delays.answer() : null;
+      const settled = !delay || !!delay.lag || seconds >= lockAfter;
+      told = { mono, boom: mono || lowEnd > -2, l, r, mid, side, settled };
+      return shape(told, delay, settled);
     };
   }
 
@@ -375,5 +537,5 @@ globalThis[Symbol.for("nerdfader.voice")] = (() => {
     };
   }
 
-  return { outputStage, shapeJudge, humDetector, notches, stableVolumeCounter, softClipCurve, SLOTS };
+  return { outputStage, shapeJudge, delayFinder, humDetector, notches, stableVolumeCounter, softClipCurve, SLOTS };
 })();
